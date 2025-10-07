@@ -50,14 +50,14 @@ pipeline {
 
     // 로그인/빌드/푸시/정리
     stage('Image Build & Push (docker)') {
-        steps {
-            script {
-                docker.withRegistry("https://${IMAGE_REGISTRY}", "${DOCKER_CREDENTIAL_ID}") {
-                    def appImage = docker.build("${IMAGE_REF}", "--platform=linux/amd64 .")
-                    appImage.push()
-                }
-            }
+    steps {
+        script {
+        docker.withRegistry('https://index.docker.io/v1/', "${DOCKER_CREDENTIAL_ID}") {
+            sh "docker build --platform=linux/amd64 -t ${IMAGE_REGISTRY_PROJECT}/${IMAGE_NAME}:${FINAL_IMAGE_TAG} ."
+            sh "docker push ${IMAGE_REGISTRY_PROJECT}/${IMAGE_NAME}:${FINAL_IMAGE_TAG}"
         }
+        }
+    }
     }
 
     // k8s 리소스 파일(deploy.yaml) 수정 및 배포

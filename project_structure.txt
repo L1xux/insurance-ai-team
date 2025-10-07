@@ -1,0 +1,68 @@
+project/
+├── __init__.py
+├── __pycache__/
+├── main.py
+├── pyproject.toml
+├── requirements.txt
+├── mypy.ini
+├── py.typed
+├── DataAnalysis.log
+├── old_project_structure.txt
+├── project_structure.txt
+├── base/
+│   ├── __init__.py
+│   ├── __pycache__/
+│   ├── data_analyzer_base.py
+│   ├── data_loader_base.py
+│   ├── llm_base.py
+│   ├── model_base.py
+│   └── service_base.py
+├── config/
+│   ├── __init__.py
+│   ├── __pycache__/
+│   ├── logging_config.py
+│   └── settings.py
+├── data/
+│   ├── reviews_1000.csv
+│   └── visualizations/
+├── factories/
+│   ├── __init__.py
+│   ├── __pycache__/
+│   ├── llm_factory.py
+│   └── service_factory.py
+├── llm/
+│   ├── __init__.py
+│   ├── __pycache__/
+│   ├── llm_ollama.py
+│   └── llm_openai.py
+├── models/
+│   ├── __init__.py
+│   ├── __pycache__/
+│   └── review_model.py
+├── services/
+│   ├── __init__.py
+│   ├── __pycache__/
+│   ├── insurance/
+│   │   ├── __init__.py
+│   │   ├── __pycache__/
+│   │   ├── insurance_data_analyzer.py
+│   │   ├── insurance_data_loader.py
+│   │   └── insurance_service.py
+│   ├── llm/
+│   │   ├── __init__.py
+│   │   ├── __pycache__/
+│   │   ├── code_processor.py
+│   │   ├── llm_service.py
+│   │   └── visualization_generator.py
+│   └── review/
+│       ├── __init__.py
+│       ├── __pycache__/
+│       ├── review_data_analyzer.py
+│       ├── review_data_loader.py
+│       └── review_service.py
+└── utils/
+    ├── __init__.py
+    ├── __pycache__/
+    ├── csv_handler.py
+    ├── llm_model_handler.py
+    └── profiler.py

@@ -37,13 +37,10 @@ available_models = []
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    FastAPI lifespan 이벤트 핸들러
-    서버 시작 시와 종료 시 실행되는 코드
-    """
+    """서버 시작/종료 시 실행되는 lifespan 이벤트 핸들러"""
     global available_files, available_models
     
-    # ========== Startup ==========
+    # Startup
     logger.info("서버 시작 - 파일 및 모델 목록 로드 중...")
     
     try:
@@ -56,28 +53,30 @@ async def lifespan(app: FastAPI):
         llm_handler = LLMModelHandler()
         available_models = llm_handler.models
         
-        logger.info(f"✅ CSV 파일 {len(available_files)}개 로드")
-        logger.info(f"✅ LLM 모델 {len(available_models)}개 로드")
+        logger.info(f"CSV 파일 {len(available_files)}개 로드")
+        logger.info(f"사용 가능한 모델 타입: {type(available_models)}")
+        if available_models:
+            logger.info(f"첫 번째 모델 샘플: {available_models[0] if available_models else 'None'}")
         
     except Exception as e:
         logger.error(f"초기화 오류: {str(e)}", exc_info=True)
         available_files = []
         available_models = []
     
-    yield  # 서버 실행 (이 지점에서 애플리케이션이 동작)
+    yield  # 여기서 서버 실행
     
-    # ========== Shutdown ==========
-    logger.info("서버 종료 중...")
+    # Shutdown (필요시)
+    logger.info("서버 종료")
 
 
-# FastAPI 앱 생성 (lifespan 핸들러 연결)
+# FastAPI 앱 생성 (lifespan 핸들러 포함)
 app = FastAPI(
     title="Data Analysis Runner API",
     description="기존 데이터 분석 로직을 웹으로 실행",
     version="2.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
-    lifespan=lifespan  # ← 여기서 lifespan 핸들러 등록
+    lifespan=lifespan
 )
 
 # CORS 설정
@@ -88,6 +87,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 시각화 이미지 디렉토리 설정 및 정적 파일 서빙
+VISUALIZATION_DIR = os.path.join(current_dir, "data", "visualizations")
+os.makedirs(VISUALIZATION_DIR, exist_ok=True)
+app.mount("/images", StaticFiles(directory=VISUALIZATION_DIR), name="images")
 
 # 저장 디렉토리 생성
 OUTPUT_DIR = "outputs"
@@ -104,7 +108,7 @@ HTML_TEMPLATE = """
     <style>
         body {
             font-family: Arial, sans-serif;
-            max-width: 800px;
+            max-width: 1200px;
             margin: 50px auto;
             padding: 20px;
             background-color: #f5f5f5;
@@ -190,19 +194,31 @@ HTML_TEMPLATE = """
             color: #777;
             margin-top: 3px;
         }
+        #visualizationContainer {
+            margin-top: 30px;
+            display: none;
+        }
+        #visualizationImage {
+            max-width: 100%;
+            height: auto;
+            border: 2px solid #4CAF50;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .image-title {
+            font-size: 18px;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 15px;
+            padding: 10px;
+            background-color: #e8f5e9;
+            border-radius: 4px;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>데이터 분석 및 시각화 실행</h1>
-        
-        <div style="background-color: #fff3cd; border: 1px solid #ffc107; padding: 15px; border-radius: 4px; margin-bottom: 20px;">
-            <strong>중요:</strong> LLM 사용 전 API 키 설정이 필요합니다.<br>
-            <small>
-            • OpenAI: 환경변수 <code>OPENAI_API_KEY</code> 설정<br>
-            • Ollama: 로컬에서 Ollama 서버 실행 필요
-            </small>
-        </div>
         
         <form id="analysisForm">
             <div class="form-group">
@@ -225,12 +241,20 @@ HTML_TEMPLATE = """
         </form>
         
         <div id="result"></div>
+        
+        <!-- 시각화 이미지 표시 영역 -->
+        <div id="visualizationContainer">
+            <div class="image-title">생성된 시각화</div>
+            <img id="visualizationImage" alt="데이터 시각화 결과" />
+        </div>
     </div>
 
     <script>
         const form = document.getElementById('analysisForm');
         const resultDiv = document.getElementById('result');
         const runButton = document.getElementById('runButton');
+        const vizContainer = document.getElementById('visualizationContainer');
+        const vizImage = document.getElementById('visualizationImage');
 
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
@@ -244,6 +268,8 @@ HTML_TEMPLATE = """
                 return;
             }
             
+            // 이전 결과 초기화
+            vizContainer.style.display = 'none';
             runButton.disabled = true;
             showResult('<div class="spinner"></div> 분석을 실행 중입니다... 잠시만 기다려주세요.', 'loading');
             
@@ -262,8 +288,41 @@ HTML_TEMPLATE = """
                 const data = await response.json();
                 
                 if (response.ok) {
-                    showResult(data.message + '<br><br>' + 
-                              '<strong>결과:</strong><br>' + data.details, 'success');
+                    // 성공 메시지 표시
+                    showResult(
+                        data.message + '<br><br>' + 
+                        '<strong>파일:</strong> ' + data.details + '<br>' +
+                        '<strong>모델:</strong> ' + data.provider.toUpperCase() + ' - ' + data.model, 
+                        'success'
+                    );
+                    
+                    // 이미지 경로에서 파일명 추출
+                    // 예: data/visualizations/visualization_20251007_153949.png -> visualization_20251007_153949.png
+                    const filePath = data.file_path;
+                    const fileName = filePath.split('/').pop();
+                    
+                    console.log('파일 경로:', filePath);
+                    console.log('파일명:', fileName);
+                    
+                    // 이미지 URL 생성 및 표시
+                    const imageUrl = `/images/${fileName}`;
+                    console.log('이미지 URL:', imageUrl);
+                    
+                    vizImage.src = imageUrl;
+                    vizContainer.style.display = 'block';
+                    
+                    // 이미지 로딩 에러 처리
+                    vizImage.onerror = function() {
+                        console.error('이미지 로딩 실패:', imageUrl);
+                        showResult('분석은 완료되었으나 이미지를 표시할 수 없습니다.<br>' + data.details, 'error');
+                        vizContainer.style.display = 'none';
+                    };
+                    
+                    // 이미지 로딩 성공
+                    vizImage.onload = function() {
+                        console.log('이미지 로딩 성공!');
+                    };
+                    
                 } else {
                     showResult('오류: ' + data.detail, 'error');
                 }
@@ -283,7 +342,6 @@ HTML_TEMPLATE = """
 </body>
 </html>
 """
-
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -366,11 +424,9 @@ async def run_analysis(
         if df is None:
             raise HTTPException(status_code=500, detail="데이터프레임을 로드할 수 없습니다.")
         
-        # 웹 환경에서는 interactive 입력 없이 자동 분석 모드로 실행
-        # 빈 문자열 = 자동 분석 모드
         viz_result = await llm_service.create_visualization_with_user_input(
-            analysis_results=results.get('analysis', {}),
-            df=df,
+            results.get('analysis', {}),
+            df,
             interactive=False
         )
         
@@ -386,9 +442,9 @@ async def run_analysis(
                 "success": True,
                 "message": message,
                 "details": details,
-                "file_path": viz_result['file_path'],
-                "provider": provider,
-                "model": llm_model
+                "file_path": str(viz_result['file_path']),
+                "provider": str(provider),
+                "model": str(llm_model)
             })
         else:
             raise HTTPException(
@@ -402,17 +458,8 @@ async def run_analysis(
         logger.info("프로그램이 중단되었습니다.")
         raise HTTPException(status_code=500, detail="프로그램이 중단되었습니다.")
     except Exception as e:
-        error_msg = str(e)
-        logger.error(f"오류 발생: {error_msg}", exc_info=True)
-        
-        # API 키 오류 감지
-        if "401" in error_msg or "invalid_api_key" in error_msg or "Incorrect API key" in error_msg:
-            raise HTTPException(
-                status_code=500, 
-                detail=f"API 키 오류: {provider.upper()} API 키가 올바르지 않습니다. 환경변수 OPENAI_API_KEY를 확인해주세요."
-            )
-        
-        raise HTTPException(status_code=500, detail=f"오류 발생: {error_msg}")
+        logger.error(f"오류 발생: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"오류 발생: {str(e)}")
 
 
 @app.get("/files")

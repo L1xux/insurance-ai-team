@@ -62,24 +62,24 @@ pipeline {
 
     // k8s 리소스 파일(deploy.yaml) 수정 및 배포
     stage('Deploy to Kubernetes') {
-      steps {
+    steps {
         sh '''
-            set -eux
-            test -f ./k8s/deploy.yaml
+        set -eux
+        test -f ./k8s/deploy.yaml
 
-            echo "--- BEFORE ---"
-            grep -n 'image:' ./k8s/deploy.yaml || true
+        echo "--- BEFORE ---"
+        grep -n 'image:' ./k8s/deploy.yaml || true
 
-            # IMAGE_REGISTRY/IMAGE_NAME 패턴의 태그를 FINAL_IMAGE_TAG 로 치환
-            sed -Ei "s#(image:[[:space:]]*$IMAGE_REGISTRY/$IMAGE_NAME)[^[:space:]]+#\\1:$FINAL_IMAGE_TAG#" ./k8s/deploy.yaml
+        # progamm3r/llm-data-analyzer 의 태그를 교체
+        sed -Ei "s#(image:[[:space:]]*)(docker\\.io/)?(${IMAGE_REGISTRY_PROJECT}/${IMAGE_NAME}):[^[:space:]]+#\\1\\2\\3:${FINAL_IMAGE_TAG}#g" ./k8s/deploy.yaml
 
-            echo "--- AFTER ---"
-            grep -n 'image:' ./k8s/deploy.yaml || true
+        echo "--- AFTER ---"
+        grep -n 'image:' ./k8s/deploy.yaml || true
 
-            kubectl apply -n ${K8S_NAMESPACE} -f ./k8s
-            kubectl rollout status -n ${K8S_NAMESPACE} deployment/${IMAGE_NAME}
+        kubectl apply -n ${K8S_NAMESPACE} -f ./k8s
+        kubectl rollout status -n ${K8S_NAMESPACE} deployment/sk080-llm-data-analyzer
         '''
-      }
+    }
     }
 
   }

@@ -3,11 +3,10 @@ pipeline {
 
   environment {
     GIT_URL                = 'https://github.com/L1xux/llm-data-analyzer.git'
-    GIT_BRANCH             = 'main'            // 또는 main
-    GIT_ID                 = 'skala-github-id'   // GitHub PAT credential ID
+    GIT_BRANCH             = 'main'           
+    GIT_ID                 = 'skala-github-id'   
     IMAGE_NAME             = 'llm-data-analyzer'    
     
-    // =======================
     IMAGE_TAG              = "1.0.0-${BUILD_NUMBER}"
     IMAGE_REGISTRY_URL     = 'docker.io'      
     IMAGE_REGISTRY_PROJECT = 'progamm3r'      
@@ -30,8 +29,6 @@ pipeline {
       }
     }
 
-
-    // 태그/이미지 경로 계산 (메타)
     stage('Compute Image Meta') {
       steps {
         script {
@@ -47,41 +44,47 @@ pipeline {
       }
     }
 
-
-    // 로그인/빌드/푸시/정리
     stage('Image Build & Push (docker)') {
-    steps {
+      steps {
         script {
-        docker.withRegistry('https://index.docker.io/v1/', "${DOCKER_CREDENTIAL_ID}") {
+          docker.withRegistry('https://index.docker.io/v1/', "${DOCKER_CREDENTIAL_ID}") {
             sh "docker build --platform=linux/amd64 -t ${IMAGE_REGISTRY_PROJECT}/${IMAGE_NAME}:${FINAL_IMAGE_TAG} ."
             sh "docker push ${IMAGE_REGISTRY_PROJECT}/${IMAGE_NAME}:${FINAL_IMAGE_TAG}"
+          }
         }
-        }
-    }
+      }
     }
 
-    // k8s 리소스 파일(deploy.yaml) 수정 및 배포
-    stage('Deploy to Kubernetes') {
-        steps {
+    // Git에 이미지 태그 커밋
+    stage('Update Git Repository') {
+      steps {
+        script {
+          withCredentials([usernamePassword(credentialsId: "${GIT_ID}", 
+                                           usernameVariable: 'GIT_USER', 
+                                           passwordVariable: 'GIT_TOKEN')]) {
             sh '''
             set -eux
-            test -f ./k8s/deploy.yaml
-
-            echo "--- BEFORE ---"
-            grep -n 'image:' ./k8s/deploy.yaml || true
-
-            # progamm3r/llm-data-analyzer 의 태그를 교체
+            
+            # 이미지 태그 변경
             sed -Ei "s#(image:[[:space:]]*)(docker\\.io/)?(${IMAGE_REGISTRY_PROJECT}/${IMAGE_NAME}):[^[:space:]]+#\\1\\2\\3:${FINAL_IMAGE_TAG}#g" ./k8s/deploy.yaml
-
-            echo "--- AFTER ---"
-            grep -n 'image:' ./k8s/deploy.yaml || true
-
-            kubectl apply -n ${K8S_NAMESPACE} -f ./k8s
-            kubectl rollout status -n ${K8S_NAMESPACE} deployment/sk080-llm-data-analyzer
+            
+            echo "=== Updated deploy.yaml ==="
+            grep "image:" ./k8s/deploy.yaml
+            
+            # Git 설정
+            git config user.email "mr938363@google.com"
+            git config user.name "Jin"
+            
+            # 변경사항 커밋
+            git add ./k8s/deploy.yaml
+            git commit -m "chore: Update image to ${FINAL_IMAGE_TAG} [skip ci]" || echo "No changes to commit"
+            
+            # Git 푸시
+            git push https://${GIT_USER}:${GIT_TOKEN}@github.com/L1xux/llm-data-analyzer.git HEAD:main
             '''
+          }
         }
+      }
     }
-
   }
 }
-

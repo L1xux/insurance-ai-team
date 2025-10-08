@@ -218,7 +218,7 @@ HTML_TEMPLATE = """
 </head>
 <body>
     <div class="container">
-        <h1>데이터 분석 실행</h1>
+        <h1>데이터 분석</h1>
         
         <form id="analysisForm">
             <div class="form-group">

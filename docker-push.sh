@@ -11,10 +11,6 @@ DOCKER_CACHE="--no-cache"
 echo ${DOCKER_HUB_PASSWORD} | docker login -u ${DOCKER_HUB_USER} --password-stdin \
     || { echo "Docker 로그인 실패"; exit 1; }
 
-# 2. 이미지 빌드
-docker build ${DOCKER_CACHE} -t ${NAME}-${IMAGE_NAME}:${VERSION} . \
-    || { echo "Docker 이미지 빌드 실패"; exit 1; }
-
 # 3. Docker Hub용 태그 추가
 docker tag ${NAME}-${IMAGE_NAME}:${VERSION} ${DOCKER_HUB_USER}/${IMAGE_NAME}:${VERSION}
 

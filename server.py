@@ -3,10 +3,11 @@ FastAPI 기반 데이터 분석 실행 서버
 =========================
 Author: Jin
 Date: 2025.10.07
-Version: 2.0
+Version: 2.1
 
 Description:
 기존 main.py의 로직을 FastAPI로 래핑하여 웹에서 실행 가능하게 함
+Base64 이미지 인코딩으로 Kubernetes 다중 Pod 환경 지원
 """
 from fastapi import FastAPI, Form, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
@@ -17,6 +18,8 @@ import sys
 import os
 import asyncio
 import json
+import base64
+from pathlib import Path
 from typing import Optional
 
 # 현재 디렉토리를 Python 경로에 추가
@@ -42,6 +45,16 @@ async def lifespan(app: FastAPI):
     
     # Startup
     logger.info("서버 시작 - 파일 및 모델 목록 로드 중...")
+    
+    # API 키 확인
+    required_keys = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"]
+    missing_keys = [key for key in required_keys if not os.getenv(key)]
+    
+    if missing_keys:
+        logger.error(f"⚠️  누락된 API 키: {', '.join(missing_keys)}")
+        logger.error("Kubernetes Secret을 확인해주세요!")
+    else:
+        logger.info("✅ 모든 API 키가 정상적으로 설정되었습니다.")
     
     try:
         # CSV 파일 목록 가져오기
@@ -73,7 +86,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Data Analysis Runner API",
     description="기존 데이터 분석 로직을 웹으로 실행",
-    version="2.0.0",
+    version="2.1.0",
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan
@@ -296,32 +309,24 @@ HTML_TEMPLATE = """
                         'success'
                     );
                     
-                    // 이미지 경로에서 파일명 추출
-                    // 예: data/visualizations/visualization_20251007_153949.png -> visualization_20251007_153949.png
-                    const filePath = data.file_path;
-                    const fileName = filePath.split('/').pop();
-                    
-                    console.log('파일 경로:', filePath);
-                    console.log('파일명:', fileName);
-                    
-                    // 이미지 URL 생성 및 표시
-                    const imageUrl = `/images/${fileName}`;
-                    console.log('이미지 URL:', imageUrl);
-                    
-                    vizImage.src = imageUrl;
-                    vizContainer.style.display = 'block';
-                    
-                    // 이미지 로딩 에러 처리
-                    vizImage.onerror = function() {
-                        console.error('이미지 로딩 실패:', imageUrl);
-                        showResult('분석은 완료되었으나 이미지를 표시할 수 없습니다.<br>' + data.details, 'error');
-                        vizContainer.style.display = 'none';
-                    };
-                    
-                    // 이미지 로딩 성공
-                    vizImage.onload = function() {
-                        console.log('이미지 로딩 성공!');
-                    };
+                    // Base64 이미지 직접 표시
+                    if (data.image_base64) {
+                        console.log('Base64 이미지 데이터 수신 완료');
+                        vizImage.src = data.image_base64;
+                        vizContainer.style.display = 'block';
+                        
+                        vizImage.onerror = function() {
+                            console.error('이미지 표시 실패');
+                            showResult('분석은 완료되었으나 이미지를 표시할 수 없습니다.', 'error');
+                            vizContainer.style.display = 'none';
+                        };
+                        
+                        vizImage.onload = function() {
+                            console.log('✅ 이미지 로딩 성공!');
+                        };
+                    } else {
+                        showResult('분석은 완료되었으나 이미지 데이터가 없습니다.', 'error');
+                    }
                     
                 } else {
                     showResult('오류: ' + data.detail, 'error');
@@ -406,6 +411,15 @@ async def run_analysis(
                 detail=f"지원하지 않는 모델입니다: {llm_model}"
             )
         
+        # API 키 확인
+        api_key_name = f"{provider.upper()}_API_KEY"
+        if not os.getenv(api_key_name):
+            raise HTTPException(
+                status_code=500,
+                detail=f"{provider.upper()} API 키가 설정되지 않았습니다. "
+                       f"Kubernetes Secret에 {api_key_name}를 추가해주세요."
+            )
+        
         logger.info(f"선택된 모델: {provider} - {llm_model}")
         
         # 3. 서비스 생성 및 분석 (기존 main.py 로직)
@@ -432,20 +446,33 @@ async def run_analysis(
         
         await llm_service.close()
         
-        # 5. 결과 반환
+        # 5. 결과 반환 (이미지를 Base64로 인코딩)
         if viz_result['success']:
-            message = "분석 및 시각화가 완료되었습니다!"
-            details = f"파일 저장 위치: {viz_result['file_path']}"
-            logger.info(f"완료: {viz_result['file_path']}")
+            file_path = Path(viz_result['file_path'])
             
-            return JSONResponse({
-                "success": True,
-                "message": message,
-                "details": details,
-                "file_path": str(viz_result['file_path']),
-                "provider": str(provider),
-                "model": str(llm_model)
-            })
+            # 이미지 파일 읽기 및 Base64 인코딩
+            try:
+                with open(file_path, 'rb') as img_file:
+                    img_data = base64.b64encode(img_file.read()).decode('utf-8')
+                    
+                logger.info(f"✅ 완료: {file_path}")
+                logger.info(f"이미지 크기: {len(img_data)} bytes (Base64)")
+                
+                return JSONResponse({
+                    "success": True,
+                    "message": "분석 및 시각화가 완료되었습니다!",
+                    "details": f"파일 저장 위치: {file_path}",
+                    "file_path": str(file_path),
+                    "provider": str(provider),
+                    "model": str(llm_model),
+                    "image_base64": f"data:image/png;base64,{img_data}"
+                })
+            except Exception as e:
+                logger.error(f"이미지 읽기 실패: {e}", exc_info=True)
+                raise HTTPException(
+                    status_code=500, 
+                    detail=f"이미지 파일을 읽을 수 없습니다: {e}"
+                )
         else:
             raise HTTPException(
                 status_code=500, 
@@ -491,6 +518,20 @@ async def health_check():
         "status": "healthy",
         "available_files": len(available_files),
         "available_models": len(available_models)
+    })
+
+
+@app.get("/debug/env")
+async def debug_env():
+    """환경 변수 디버깅 (개발용)"""
+    return JSONResponse({
+        "has_openai_key": bool(os.getenv("OPENAI_API_KEY")),
+        "has_anthropic_key": bool(os.getenv("ANTHROPIC_API_KEY")),
+        "openai_key_prefix": os.getenv("OPENAI_API_KEY", "")[:10] if os.getenv("OPENAI_API_KEY") else "NOT_SET",
+        "environment": os.getenv("ENVIRONMENT", "not_set"),
+        "python_version": sys.version,
+        "pod_name": os.getenv("HOSTNAME", "unknown"),
+        "all_api_keys": [k for k in os.environ.keys() if "API" in k or "KEY" in k]
     })
 
 

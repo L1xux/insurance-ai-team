@@ -23,7 +23,7 @@ spec:
         - name: sk080-secret
       containers:
       - name: llm-data-analyzer
-        image: progamm3r/llm-data-analyzer:1.0.0-14-6b507b192c03
+        image: progamm3r/llm-data-analyzer:1.0.0
         imagePullPolicy: Always
         env:
         - name: USER_NAME
@@ -31,4 +31,7 @@ spec:
         - name: NAMESPACE
           value: skala-practice
         - name: SPRING_PROFILES_ACTIVE  
-          value: "prod"  
+          value: "prod"
+        envFrom:
+        - secretRef:
+            name: sk080-llm-api-keys

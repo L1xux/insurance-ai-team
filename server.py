@@ -448,7 +448,27 @@ async def run_analysis(
         
         # 5. 결과 반환 (이미지를 Base64로 인코딩)
         if viz_result['success']:
-            file_path = Path(viz_result['file_path'])
+            # viz_result 내용 로깅
+            logger.info(f"viz_result 내용: {viz_result}")
+            
+            # file_path 검증
+            file_path_str = viz_result.get('file_path')
+            if not file_path_str:
+                logger.error(f"file_path가 None입니다. viz_result: {viz_result}")
+                raise HTTPException(
+                    status_code=500,
+                    detail="시각화 파일 경로를 찾을 수 없습니다."
+                )
+            
+            file_path = Path(file_path_str)
+            
+            # 파일 존재 확인
+            if not file_path.exists():
+                logger.error(f"파일이 존재하지 않습니다: {file_path}")
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"시각화 파일을 찾을 수 없습니다: {file_path}"
+                )
             
             # 이미지 파일 읽기 및 Base64 인코딩
             try:
@@ -474,9 +494,11 @@ async def run_analysis(
                     detail=f"이미지 파일을 읽을 수 없습니다: {e}"
                 )
         else:
+            error_msg = viz_result.get('error_message', 'Unknown error')
+            logger.error(f"시각화 생성 실패: {error_msg}")
             raise HTTPException(
                 status_code=500, 
-                detail=f"시각화 생성 실패: {viz_result['error_message']}"
+                detail=f"시각화 생성 실패: {error_msg}"
             )
         
     except HTTPException:

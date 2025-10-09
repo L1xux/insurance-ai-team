@@ -23,7 +23,7 @@ spec:
         - name: sk080-secret
       containers:
       - name: llm-data-analyzer
-        image: progamm3r/llm-data-analyzer:1.0.0-16-3c80d786dbe2
+        image: progamm3r/llm-data-analyzer:1.0.0-17-78d91d21eb75
         imagePullPolicy: Always
         env:
         - name: USER_NAME

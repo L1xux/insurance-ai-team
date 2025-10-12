@@ -26,12 +26,16 @@ from config.logging_config import logger
 class H2022DocumentLoader(DocumentLoaderBase):
     """H2022 PDF 문서 로더"""
     
-    # 섹션 패턴
+    # 섹션 패턴 (MEPS HC-243 2022 문서의 실제 섹션)
     SECTION_PATTERNS = {
         'A': 'Data Use Agreement',
         'B': 'Background',
-        'C': 'Technical and Programming Information'
+        'C': 'Technical and Programming Information',
+        'D': 'Variable-Source Crosswalk'
     }
+    
+    # 유효한 섹션 목록
+    VALID_SECTIONS = {'A', 'B', 'C', 'D'}
     
     # 변수 패턴 (대문자로 시작하는 변수명)
     VARIABLE_PATTERN = re.compile(r'\b([A-Z][A-Z0-9_]{3,15})\b')
@@ -61,19 +65,26 @@ class H2022DocumentLoader(DocumentLoaderBase):
         excluded = {'TABLE', 'SECTION', 'PAGE', 'VALUE', 'DEFINITION', 'VARIABLE', 'TYPE'}
         return [m for m in set(matches) if m not in excluded and len(m) > 4]
     
-    def _detect_section(self, text: str) -> Optional[str]:
+    def _detect_section(self, text: str, page_num: int) -> Optional[str]:
         """
-        텍스트에서 섹션 감지
+        텍스트와 페이지 번호로 섹션 감지 (A, B, C, D)
+        
+        페이지 하단의 "C-1", "B-2", "D-15" 같은 패턴으로 감지
         
         Args:
             text: 분석할 텍스트
+            page_num: 페이지 번호
             
         Returns:
-            섹션 ID 또는 None
+            섹션 ID (A, B, C, D 중 하나)
         """
-        for section_id, section_name in self.SECTION_PATTERNS.items():
-            if section_name in text[:500]:  # 페이지 상단에서만 찾기
-                return section_id
+        # 1. 페이지 하단에서 "X-숫자" 패턴 찾기
+        footer_pattern = re.search(r'\b([A-D])-\d+', text)
+        if footer_pattern:
+            section = footer_pattern.group(1)
+            if section in self.VALID_SECTIONS:
+                return section
+        
         return None
     
     def _detect_category(self, text: str, variables: List[str]) -> Optional[str]:
@@ -127,30 +138,6 @@ class H2022DocumentLoader(DocumentLoaderBase):
         """
         return 'Table' in text[:200] or '|' in text or 'Value' in text and 'Definition' in text
     
-    def _has_code_values(self, text: str) -> bool:
-        """
-        페이지에 코드 값 정의가 있는지 확인
-        
-        Args:
-            text: 확인할 텍스트
-            
-        Returns:
-            코드 값 포함 여부
-        """
-        return bool(re.search(r'-?\d+\s+(Inapplicable|Refused|Don\'t Know)', text))
-    
-    def _is_variable_definition(self, text: str) -> bool:
-        """
-        변수 정의 페이지인지 확인
-        
-        Args:
-            text: 확인할 텍스트
-            
-        Returns:
-            변수 정의 페이지 여부
-        """
-        return 'Variable' in text and ('Description' in text or 'Format' in text or 'Type' in text)
-    
     def load(self, filepath: str) -> List[Document]:
         """
         PDF 파일에서 문서 로드 및 구조화
@@ -190,8 +177,8 @@ class H2022DocumentLoader(DocumentLoaderBase):
                         # 변수 추출
                         variables = self._extract_variables(text)
                         
-                        # 섹션 감지
-                        section = self._detect_section(text)
+                        # 섹션 감지 (개선된 로직)
+                        section = self._detect_section(text, page_num + 1)
                         
                         # 카테고리 감지
                         category = self._detect_category(text, variables)
@@ -204,13 +191,10 @@ class H2022DocumentLoader(DocumentLoaderBase):
                             total_pages=total_pages,
                             content=text.strip(),
                             document_type="MEPS_HC243_2022",
-                            year=2022,
                             section=section,
                             variables=variables,
                             category=category,
-                            has_table=self._has_table(text),
-                            has_code_values=self._has_code_values(text),
-                            is_variable_definition=self._is_variable_definition(text)
+                            has_table=self._has_table(text)
                         )
                         
                         # Document 객체로 변환 (메타데이터에 모델 정보 포함)

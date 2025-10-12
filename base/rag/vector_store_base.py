@@ -7,7 +7,6 @@ Version: 1.0
 
 Description:
 임베딩 벡터를 저장하고 검색하는 벡터 데이터베이스의 베이스 클래스입니다.
-FAISS, Chroma, Pinecone 등 다양한 벡터 저장소를 통일된 인터페이스로 사용할 수 있도록 설계되었습니다.
 """
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional, Tuple
@@ -16,7 +15,7 @@ from config.logging_config import logger
 
 
 class VectorStoreBase(ABC):
-    """벡터 저장소 베이스 클래스 - 임베딩 벡터 저장 및 검색"""
+    """벡터 저장소 베이스 클래스"""
     
     def __init__(
         self,

@@ -14,9 +14,8 @@ from typing import List, Optional, Dict, Any
 
 from config.logging_config import logger
 
-
 class EmbeddingBase(ABC):
-    """임베딩 베이스 클래스 - 텍스트를 벡터로 변환"""
+    """임베딩 베이스 클래스"""
     
     def __init__(
         self,

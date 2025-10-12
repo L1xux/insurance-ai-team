@@ -13,10 +13,10 @@ Description:
 from typing import Dict, Type, Optional
 from enum import Enum
 
-from base.llm_base import LLMBase
 
-from llm.llm_openai import LLMOpenAI
-from llm.llm_ollama import LLMOllama
+from agents.llm_providers.llm_openai import LLMOpenAI
+from agents.llm_providers.llm_ollama import LLMOllama
+from base.agent.llm_base import LLMBase
 
 from config.logging_config import logger
 

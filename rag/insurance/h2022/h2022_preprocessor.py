@@ -23,7 +23,6 @@ class H2022Preprocessor(PreprocessorBase):
     TABLE_PATTERN = re.compile(r'Table\s+\d+', re.IGNORECASE)
     SECTION_PATTERN = re.compile(r'Section\s+[A-Z]', re.IGNORECASE)
     VARIABLE_PATTERN = re.compile(r'\b([A-Z][A-Z0-9_]{3,15})\b')
-    CODE_VALUE_PATTERN = re.compile(r'-?\d+\s+(Inapplicable|Refused|Don\'t Know|Cannot Be Computed)', re.IGNORECASE)
     
     def __init__(
         self,
@@ -103,13 +102,23 @@ class H2022Preprocessor(PreprocessorBase):
         
         chunks = []
         current_pos = 0
+        text_length = len(text)
+        iteration = 0
+        max_iterations = (text_length // (self.chunk_size - self.chunk_overlap)) + 10
         
-        while current_pos < len(text):
+        while current_pos < text_length:
+            iteration += 1
+            
+            # 무한 루프 방지 (안전장치)
+            if iteration > max_iterations:
+                logger.warning(f"[{self.name}] 최대 반복 횟수 초과, 청킹 중단")
+                break
+            
             # 일반 청킹
-            end_pos = min(current_pos + self.chunk_size, len(text))
+            end_pos = min(current_pos + self.chunk_size, text_length)
             
             # 문장 경계에서 자르기 (가능한 경우)
-            if end_pos < len(text):
+            if end_pos < text_length:
                 # 마지막 마침표 찾기
                 chunk_text = text[current_pos:end_pos]
                 last_period = chunk_text.rfind('. ')
@@ -127,14 +136,16 @@ class H2022Preprocessor(PreprocessorBase):
             if chunk_text and len(chunk_text) > 50:  # 너무 짧은 청크 제외
                 chunks.append(chunk_text)
             
-            # 다음 위치 (오버랩 적용)
-            current_pos = end_pos - self.chunk_overlap
+            # 다음 위치 계산
+            next_pos = end_pos - self.chunk_overlap
             
-            # 무한 루프 방지
-            if current_pos <= end_pos - self.chunk_size:
-                current_pos = end_pos
+            # 진행이 없으면 강제로 앞으로 이동 (무한 루프 방지)
+            if next_pos <= current_pos:
+                next_pos = current_pos + self.chunk_size
+            
+            current_pos = next_pos
         
-        logger.info(f"[{self.name}] 청킹 완료: {len(chunks)}개 청크 생성")
+        logger.info(f"[{self.name}] 청킹 완료: {len(chunks)}개 청크 생성 ({iteration}번 반복)")
         
         return chunks
     
@@ -153,13 +164,18 @@ class H2022Preprocessor(PreprocessorBase):
         Returns:
             청크 객체 리스트
         """
+        page_num = page_metadata.get('page_number', 0)
+        
         # 전처리
+        logger.debug(f"[{self.name}] 페이지 {page_num}: 전처리 중...")
         cleaned_text = self.preprocess(text)
         
         # 청킹
+        logger.debug(f"[{self.name}] 페이지 {page_num}: 청킹 중...")
         text_chunks = self.split_text(cleaned_text)
         
         # 청크 객체 생성
+        logger.debug(f"[{self.name}] 페이지 {page_num}: {len(text_chunks)}개 청크에 메타데이터 추가 중...")
         chunks = []
         for idx, chunk_text in enumerate(text_chunks):
             # 메타데이터 복사 및 확장
@@ -170,23 +186,22 @@ class H2022Preprocessor(PreprocessorBase):
             
             # 청크 특성 분석
             chunk_metadata['has_table'] = bool(self.TABLE_PATTERN.search(chunk_text))
-            chunk_metadata['has_code_values'] = bool(self.CODE_VALUE_PATTERN.search(chunk_text))
             
-            # 청크에 포함된 변수 추출
+            # 청크에 포함된 변수 추출 (빠른 처리를 위해 제한)
             variables = self.VARIABLE_PATTERN.findall(chunk_text)
             chunk_metadata['chunk_variables'] = list(set(variables))[:10]  # 최대 10개
             
             chunk = Chunk(
                 content=chunk_text,
                 metadata=chunk_metadata,
-                chunk_id=f"h2022_p{page_metadata.get('page_number', 0)}_c{idx}"
+                chunk_id=f"h2022_p{page_num}_c{idx}"
             )
             chunks.append(chunk)
         
         self.processed_count += 1
         logger.info(
-            f"[{self.name}] 페이지 {page_metadata.get('page_number')} 처리 완료: "
-            f"{len(chunks)}개 청크"
+            f"[{self.name}] 페이지 {page_num} 처리 완료: "
+            f"{len(chunks)}개 청크 생성"
         )
         
         return chunks

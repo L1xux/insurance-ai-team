@@ -48,7 +48,7 @@ class Chunk:
 
 
 class PreprocessorBase(ABC):
-    """전처리기 베이스 클래스 - 문서 청킹 및 전처리"""
+    """전처리기 베이스 클래스"""
     
     def __init__(
         self,

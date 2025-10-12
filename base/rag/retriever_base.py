@@ -51,7 +51,7 @@ class SearchResult:
 
 
 class RetrieverBase(ABC):
-    """검색기 베이스 클래스 - 의미 기반 문서 검색"""
+    """검색기 베이스 클래스"""
     
     def __init__(
         self,

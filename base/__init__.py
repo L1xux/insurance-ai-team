@@ -10,13 +10,11 @@ Base module - 모든 베이스/추상 클래스들
 from .data_loader_base import DataLoaderBase
 from .agent.data_analyzer_base import DataAnalyzerBase
 from .model_base import DataModelBase
-from .service_base import ServiceBase
 from .agent.llm_base import LLMBase
 
 __all__ = [
     "DataLoaderBase",
     "DataAnalyzerBase",
     "DataModelBase",
-    "ServiceBase",
     "LLMBase" 
 ]

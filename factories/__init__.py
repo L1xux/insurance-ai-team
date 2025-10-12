@@ -1,5 +1,4 @@
 
-from .service_factory import ServiceFactory
 from .llm_factory import LLMFactory
 
 __all__ = [

@@ -46,7 +46,7 @@ class Document:
 
 
 class DocumentLoaderBase(ABC):
-    """문서 로더 베이스 클래스 - 다양한 문서 형식 지원"""
+    """문서 로더 베이스 클래스"""
     
     def __init__(self, name: Optional[str] = None):
         """

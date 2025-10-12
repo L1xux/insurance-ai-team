@@ -26,7 +26,6 @@ class H2022Document:
     
     # === 문서 정보 ===
     document_type: str = "MEPS_HC243_2022"  # 문서 타입
-    year: int = 2022  # 데이터 연도
     panel: Optional[str] = None  # Panel 번호 (26, 27 등)
     round_info: Optional[str] = None  # Round 정보
     
@@ -43,8 +42,6 @@ class H2022Document:
     
     # === 추가 메타데이터 ===
     has_table: bool = False  # 테이블 포함 여부
-    has_code_values: bool = False  # 코드 값 정의 포함 여부
-    is_variable_definition: bool = False  # 변수 정의 페이지 여부
     
     # === 시간 정보 ===
     created_at: datetime = field(default_factory=datetime.now)
@@ -62,7 +59,6 @@ class H2022Document:
             'total_pages': self.total_pages,
             'content': self.content,
             'document_type': self.document_type,
-            'year': self.year,
             'panel': self.panel,
             'round_info': self.round_info,
             'section': self.section,
@@ -71,8 +67,6 @@ class H2022Document:
             'variables': self.variables,
             'category': self.category,
             'has_table': self.has_table,
-            'has_code_values': self.has_code_values,
-            'is_variable_definition': self.is_variable_definition,
             'created_at': self.created_at.isoformat()
         }
     

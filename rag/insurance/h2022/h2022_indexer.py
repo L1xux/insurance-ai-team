@@ -94,11 +94,18 @@ class H2022Indexer(IndexerBase):
                 }
             
             # 2. 전처리 및 청킹
-            logger.info(f"[{self.name}] 2단계: 텍스트 전처리 및 청킹")
+            logger.info(f"[{self.name}] 2단계: 텍스트 전처리 및 청킹 ({len(documents)}개 페이지)")
             all_chunks = []
             all_metadata = []
             
-            for doc in documents:
+            for doc_idx, doc in enumerate(documents, 1):
+                # 진행 상황 로그 (10페이지마다)
+                if doc_idx % 10 == 0 or doc_idx == 1:
+                    progress = (doc_idx / len(documents)) * 100
+                    logger.info(
+                        f"[{self.name}] 청킹 진행: {doc_idx}/{len(documents)} 페이지 ({progress:.1f}%)"
+                    )
+                
                 # H2022 전용 전처리 및 청킹 (메타데이터 활용)
                 chunks = self.processor.create_chunks_with_metadata(
                     text=doc.content,
@@ -116,7 +123,7 @@ class H2022Indexer(IndexerBase):
                     
                     all_metadata.append(chunk_meta)
             
-            logger.info(f"[{self.name}] 총 {len(all_chunks)}개 청크 생성")
+            logger.info(f"[{self.name}] 청킹 완료: 총 {len(all_chunks)}개 청크 생성")
             
             # 3. 임베딩
             logger.info(f"[{self.name}] 3단계: 임베딩 생성")
@@ -215,29 +222,3 @@ class H2022Indexer(IndexerBase):
                 'success': False,
                 'error': str(e)
             }
-    
-    def rebuild_index(self) -> bool:
-        """
-        인덱스 재구축 (테이블 초기화)
-        
-        Returns:
-            재구축 성공 여부
-        """
-        try:
-            logger.info(f"[{self.name}] 인덱스 재구축 시작")
-            
-            # 벡터 저장소 초기화
-            success = self.vector_store.clear_table()
-            
-            if success:
-                # 통계 초기화
-                self.indexed_count = 0
-                self.total_chunks = 0
-                logger.info(f"[{self.name}] 인덱스 재구축 완료")
-            
-            return success
-            
-        except Exception as e:
-            logger.error(f"[{self.name}] 인덱스 재구축 실패: {str(e)}")
-            return False
-

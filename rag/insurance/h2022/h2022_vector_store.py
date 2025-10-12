@@ -9,9 +9,8 @@ Description:
 PostgreSQL의 pgvector 확장을 사용하는 H2022 벡터 저장소입니다.
 db_connection.py를 활용하여 벡터 데이터를 저장하고 검색합니다.
 H2022Document 모델의 구조화된 필드를 테이블 컬럼으로 저장합니다.
-HNSW 인덱스를 사용한 고속 ANN 검색을 지원합니다.
+KNN 검색을 지원합니다.
 """
-import uuid
 import json
 from typing import List, Dict, Any, Optional, Tuple
 
@@ -27,6 +26,7 @@ class H2022VectorStore(VectorStoreBase):
         self,
         dimension: int,
         table_name: str = "h2022_vector_embeddings",
+        schema_name: str = "meps_2022_vector",
         name: Optional[str] = None
     ):
         """
@@ -35,14 +35,18 @@ class H2022VectorStore(VectorStoreBase):
         Args:
             dimension: 벡터 차원 수
             table_name: 사용할 테이블 이름
+            schema_name: 스키마 이름 (기본값: meps_2022_vector)
             name: 저장소 이름
         """
         super().__init__(dimension=dimension, name=name or "H2022VectorStore")
         
         self.table_name = table_name
+        self.schema_name = schema_name
+        self.full_table_name = f"{schema_name}.{table_name}"
         self.db_manager = DatabaseManager()
         
-        # 테이블 초기화
+        # 스키마 및 테이블 초기화
+        self._initialize_schema()
         self._initialize_table()
         
         # 벡터 개수 업데이트
@@ -50,8 +54,18 @@ class H2022VectorStore(VectorStoreBase):
         
         logger.info(
             f"[{self.name}] PostgreSQL + pgvector 저장소 초기화 완료 "
-            f"(table={self.table_name}, dim={self.dimension}, count={self.vector_count})"
+            f"(schema={schema_name}, table={table_name}, dim={self.dimension}, count={self.vector_count})"
         )
+    
+    def _initialize_schema(self) -> None:
+        """스키마 생성"""
+        try:
+            with self.db_manager.get_cursor() as cursor:
+                cursor.execute(f"CREATE SCHEMA IF NOT EXISTS {self.schema_name};")
+                logger.info(f"[{self.name}] 스키마 초기화 완료: {self.schema_name}")
+        except Exception as e:
+            logger.error(f"[{self.name}] 스키마 초기화 실패: {str(e)}")
+            raise
     
     def _initialize_table(self) -> None:
         """
@@ -64,69 +78,59 @@ class H2022VectorStore(VectorStoreBase):
                 # pgvector 확장 활성화
                 cursor.execute("CREATE EXTENSION IF NOT EXISTS vector;")
                 
-                # 테이블 생성 
+                # 테이블 생성 (SERIAL id 사용)
                 cursor.execute(f"""
-                    CREATE TABLE IF NOT EXISTS {self.table_name} (
-                        id TEXT PRIMARY KEY,
+                    CREATE TABLE IF NOT EXISTS {self.full_table_name} (
+                        id SERIAL PRIMARY KEY,
                         embedding vector({self.dimension}),
                         content TEXT,
                         
                         page_number INT,
                         total_pages INT,
                         document_type TEXT DEFAULT 'MEPS_HC243_2022',
-                        year INT DEFAULT 2022,
                         section TEXT,
                         category TEXT,
                         
                         -- 페이지 특성
                         has_table BOOLEAN DEFAULT FALSE,
-                        has_code_values BOOLEAN DEFAULT FALSE,
-                        is_variable_definition BOOLEAN DEFAULT FALSE,
                         
                         -- 청크 정보
                         chunk_index INT,
-                        chunk_id TEXT,
                         
-                        -- 추가 메타데이터 (나머지 정보)
+                        -- 추가 메타데이터
                         metadata JSONB,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     );
                 """)
                 
-                # HNSW 인덱스 생성 (ANN 검색용)
-                # m=16: 각 노드의 최대 연결 수
-                # ef_construction=64: 인덱스 구축 시 탐색 범위
-                cursor.execute(f"""
-                    CREATE INDEX IF NOT EXISTS {self.table_name}_embedding_idx
-                    ON {self.table_name}
-                    USING hnsw (embedding vector_cosine_ops)
-                    WITH (m = 16, ef_construction = 64);
-                """)
+                # 벡터 인덱스 
+                # 정확한 KNN 검색 수행
+                logger.info(f"[{self.name}] KNN 검색 모드 사용")
                 
                 # 메타데이터 GIN 인덱스 생성
                 cursor.execute(f"""
                     CREATE INDEX IF NOT EXISTS {self.table_name}_metadata_idx
-                    ON {self.table_name}
+                    ON {self.full_table_name}
                     USING gin (metadata);
                 """)
                 
-                # H2022 특화 인덱스 생성 (자주 사용되는 필터)
+                # H2022 특화 인덱스 생성
                 cursor.execute(f"""
                     CREATE INDEX IF NOT EXISTS {self.table_name}_page_idx
-                    ON {self.table_name}(page_number);
+                    ON {self.full_table_name}(page_number);
                 """)
                 
                 cursor.execute(f"""
                     CREATE INDEX IF NOT EXISTS {self.table_name}_category_idx
-                    ON {self.table_name}(category);
+                    ON {self.full_table_name}(category);
                 """)
                 
                 cursor.execute(f"""
                     CREATE INDEX IF NOT EXISTS {self.table_name}_section_idx
-                    ON {self.table_name}(section);
+                    ON {self.full_table_name}(section);
                 """)
                 
-                logger.info(f"[{self.name}] H2022 특화 테이블 및 인덱스 초기화 완료: {self.table_name}")
+                logger.info(f"[{self.name}] H2022 특화 테이블 및 인덱스 초기화 완료: {self.full_table_name}")
                 
         except Exception as e:
             logger.error(f"[{self.name}] 테이블 초기화 실패: {str(e)}")
@@ -138,7 +142,7 @@ class H2022VectorStore(VectorStoreBase):
         """
         try:
             with self.db_manager.get_cursor() as cursor:
-                cursor.execute(f"SELECT COUNT(*) as count FROM {self.table_name};")
+                cursor.execute(f"SELECT COUNT(*) as count FROM {self.full_table_name};")
                 result = cursor.fetchone()
                 self.vector_count = result['count'] if result else 0
                 
@@ -150,27 +154,23 @@ class H2022VectorStore(VectorStoreBase):
         self,
         vectors: List[List[float]],
         metadata: Optional[List[Dict[str, Any]]] = None,
-        ids: Optional[List[str]] = None
-    ) -> List[str]:
+        ids: Optional[List[str]] = None  # SERIAL 사용하므로 무시됨
+    ) -> List[int]:
         """
         벡터를 저장소에 추가 (H2022Document 필드 자동 추출)
         
         Args:
             vectors: 추가할 벡터 리스트
             metadata: 각 벡터의 메타데이터 리스트 (H2022Document 필드 포함)
-            ids: 각 벡터의 고유 ID 리스트
+            ids: 사용되지 않음 (SERIAL auto-increment 사용)
             
         Returns:
-            추가된 벡터의 ID 리스트
+            추가된 벡터의 ID 리스트 (SERIAL로 생성된 integer ID)
         """
         try:
             if not vectors:
                 logger.warning(f"[{self.name}] 추가할 벡터가 없습니다.")
                 return []
-            
-            # ID 생성
-            if ids is None:
-                ids = [str(uuid.uuid4()) for _ in vectors]
             
             # 메타데이터 기본값
             if metadata is None:
@@ -184,62 +184,60 @@ class H2022VectorStore(VectorStoreBase):
                         f"저장소 차원({self.dimension})과 일치하지 않습니다."
                     )
             
-            # 데이터베이스에 삽입 (H2022Document 필드 반영)
+            # 데이터베이스에 배치 삽입 (성능 최적화)
+            logger.info(f"[{self.name}] {len(vectors)}개 벡터를 데이터베이스에 배치 삽입 중...")
+            
+            # 데이터 준비
+            insert_data = []
+            for vector, meta in zip(vectors, metadata):
+                # H2022Document 필드 추출
+                content = meta.get('content', '')
+                page_number = meta.get('page_number')
+                total_pages = meta.get('total_pages')
+                document_type = meta.get('document_type', 'MEPS_HC243_2022')
+                section = meta.get('section')
+                category = meta.get('category')
+                has_table = meta.get('has_table', False)
+                chunk_index = meta.get('chunk_index')
+                
+                # 나머지는 metadata JSONB에 저장
+                remaining_meta = {k: v for k, v in meta.items() 
+                                 if k not in ['content', 'page_number', 'total_pages', 
+                                              'document_type', 'section', 'category',
+                                              'has_table', 'chunk_index']}
+                
+                insert_data.append((
+                    vector, content,
+                    page_number, total_pages, document_type, section, category,
+                    has_table, chunk_index, json.dumps(remaining_meta)
+                ))
+            
+            # 배치 INSERT 실행
+            inserted_ids = []
             with self.db_manager.get_cursor() as cursor:
-                for vector_id, vector, meta in zip(ids, vectors, metadata):
-                    # H2022Document 필드 추출
-                    content = meta.get('content', '')
-                    page_number = meta.get('page_number')
-                    total_pages = meta.get('total_pages')
-                    document_type = meta.get('document_type', 'MEPS_HC243_2022')
-                    year = meta.get('year', 2022)
-                    section = meta.get('section')
-                    category = meta.get('category')
-                    has_table = meta.get('has_table', False)
-                    has_code_values = meta.get('has_code_values', False)
-                    is_variable_definition = meta.get('is_variable_definition', False)
-                    chunk_index = meta.get('chunk_index')
-                    chunk_id = meta.get('chunk_id')
-                    
-                    # 나머지는 metadata JSONB에 저장
-                    remaining_meta = {k: v for k, v in meta.items() 
-                                     if k not in ['content', 'page_number', 'total_pages', 
-                                                  'document_type', 'year', 'section', 'category',
-                                                  'has_table', 'has_code_values', 'is_variable_definition',
-                                                  'chunk_index', 'chunk_id']}
-                    
-                    cursor.execute(f"""
-                        INSERT INTO {self.table_name} (
-                            id, embedding, content,
-                            page_number, total_pages, document_type, year, section, category,
-                            has_table, has_code_values, is_variable_definition,
-                            chunk_index, chunk_id, metadata
-                        )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        ON CONFLICT (id) DO UPDATE
-                        SET embedding = EXCLUDED.embedding,
-                            content = EXCLUDED.content,
-                            page_number = EXCLUDED.page_number,
-                            total_pages = EXCLUDED.total_pages,
-                            document_type = EXCLUDED.document_type,
-                            year = EXCLUDED.year,
-                            section = EXCLUDED.section,
-                            category = EXCLUDED.category,
-                            has_table = EXCLUDED.has_table,
-                            has_code_values = EXCLUDED.has_code_values,
-                            is_variable_definition = EXCLUDED.is_variable_definition,
-                            chunk_index = EXCLUDED.chunk_index,
-                            chunk_id = EXCLUDED.chunk_id,
-                            metadata = EXCLUDED.metadata;
-                    """, (vector_id, vector, content, 
-                          page_number, total_pages, document_type, year, section, category,
-                          has_table, has_code_values, is_variable_definition,
-                          chunk_index, chunk_id, json.dumps(remaining_meta)))
+                query = f"""
+                    INSERT INTO {self.full_table_name} (
+                        embedding, content,
+                        page_number, total_pages, document_type, section, category,
+                        has_table, chunk_index, metadata
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id;
+                """
+                
+                # 각 행 삽입하고 ID 수집
+                for data in insert_data:
+                    cursor.execute(query, data)
+                    result = cursor.fetchone()
+                    if result:
+                        inserted_ids.append(result['id'])
+                
+            logger.info(f"[{self.name}] 배치 삽입 완료")
             
             self.vector_count += len(vectors)
             logger.info(f"[{self.name}] 벡터 추가 완료: {len(vectors)}개 (총 {self.vector_count}개)")
             
-            return ids
+            return inserted_ids
             
         except Exception as e:
             logger.error(f"[{self.name}] 벡터 추가 실패: {str(e)}")
@@ -270,17 +268,16 @@ class H2022VectorStore(VectorStoreBase):
                     f"저장소 차원({self.dimension})과 일치하지 않습니다."
                 )
             
-            # 필터 조건 생성 (H2022 필드 지원)
+            # 필터 조건 생성 
             filter_clause = ""
             filter_params = []
             if filter_dict:
                 conditions = []
-                h2022_fields = ['page_number', 'section', 'category', 'year', 
-                               'has_table', 'has_code_values', 'is_variable_definition']
+                h2022_fields = ['page_number', 'section', 'category', 'has_table']
                 
                 for key, value in filter_dict.items():
                     if key in h2022_fields:
-                        # H2022 컬럼 필터링 (빠름!)
+                        # H2022 컬럼 필터링
                         if isinstance(value, bool):
                             conditions.append(f"{key} = %s")
                         elif isinstance(value, (int, float)):
@@ -302,7 +299,7 @@ class H2022VectorStore(VectorStoreBase):
                 
                 filter_clause = "WHERE " + " AND ".join(conditions)
             
-            # 유사도 검색 (코사인 유사도, HNSW 인덱스 자동 사용)
+            # 유사도 검색 
             with self.db_manager.get_cursor() as cursor:
                 query = f"""
                     SELECT 
@@ -312,16 +309,12 @@ class H2022VectorStore(VectorStoreBase):
                         page_number,
                         total_pages,
                         document_type,
-                        year,
                         section,
                         category,
                         has_table,
-                        has_code_values,
-                        is_variable_definition,
                         chunk_index,
-                        chunk_id,
                         metadata
-                    FROM {self.table_name}
+                    FROM {self.full_table_name}
                     {filter_clause}
                     ORDER BY embedding <=> %s::vector
                     LIMIT %s;
@@ -332,7 +325,7 @@ class H2022VectorStore(VectorStoreBase):
                 cursor.execute(query, search_params)
                 results = cursor.fetchall()
             
-            # 결과 변환 (H2022Document 필드 복원)
+            # 결과 변환
             search_results = []
             for row in results:
                 # H2022Document 필드를 메타데이터에 포함
@@ -342,14 +335,10 @@ class H2022VectorStore(VectorStoreBase):
                     'page_number': row.get('page_number'),
                     'total_pages': row.get('total_pages'),
                     'document_type': row.get('document_type'),
-                    'year': row.get('year'),
                     'section': row.get('section'),
                     'category': row.get('category'),
                     'has_table': row.get('has_table'),
-                    'has_code_values': row.get('has_code_values'),
-                    'is_variable_definition': row.get('is_variable_definition'),
-                    'chunk_index': row.get('chunk_index'),
-                    'chunk_id': row.get('chunk_id')
+                    'chunk_index': row.get('chunk_index')
                 })
                 
                 search_results.append((
@@ -358,7 +347,7 @@ class H2022VectorStore(VectorStoreBase):
                     full_metadata
                 ))
             
-            logger.info(f"[{self.name}] 검색 완료: {len(search_results)}개 결과 (H2022 필드 활용)")
+            logger.info(f"[{self.name}] KNN 검색 완료: {len(search_results)}개 결과")
             
             return search_results
             
@@ -366,12 +355,12 @@ class H2022VectorStore(VectorStoreBase):
             logger.error(f"[{self.name}] 검색 실패: {str(e)}")
             raise
     
-    def delete(self, ids: List[str]) -> bool:
+    def delete(self, ids: List[int]) -> bool:
         """
         벡터 삭제
         
         Args:
-            ids: 삭제할 벡터 ID 리스트
+            ids: 삭제할 벡터 ID 리스트 (integer)
             
         Returns:
             삭제 성공 여부
@@ -383,7 +372,7 @@ class H2022VectorStore(VectorStoreBase):
             
             with self.db_manager.get_cursor() as cursor:
                 cursor.execute(f"""
-                    DELETE FROM {self.table_name}
+                    DELETE FROM {self.full_table_name}
                     WHERE id = ANY(%s);
                 """, (ids,))
                 
@@ -400,7 +389,7 @@ class H2022VectorStore(VectorStoreBase):
     
     def update(
         self,
-        ids: List[str],
+        ids: List[int],
         vectors: Optional[List[List[float]]] = None,
         metadata: Optional[List[Dict[str, Any]]] = None
     ) -> bool:
@@ -408,7 +397,7 @@ class H2022VectorStore(VectorStoreBase):
         벡터 또는 메타데이터 업데이트
         
         Args:
-            ids: 업데이트할 벡터 ID 리스트
+            ids: 업데이트할 벡터 ID 리스트 (integer)
             vectors: 새로운 벡터 리스트
             metadata: 새로운 메타데이터 리스트
             
@@ -452,7 +441,7 @@ class H2022VectorStore(VectorStoreBase):
                     if updates:
                         params.append(vector_id)
                         query = f"""
-                            UPDATE {self.table_name}
+                            UPDATE {self.full_table_name}
                             SET {', '.join(updates)}
                             WHERE id = %s;
                         """
@@ -503,10 +492,10 @@ class H2022VectorStore(VectorStoreBase):
         """
         try:
             with self.db_manager.get_cursor() as cursor:
-                cursor.execute(f"TRUNCATE TABLE {self.table_name};")
+                cursor.execute(f"TRUNCATE TABLE {self.full_table_name} RESTART IDENTITY;")
             
             self.vector_count = 0
-            logger.info(f"[{self.name}] 테이블 초기화 완료: {self.table_name}")
+            logger.info(f"[{self.name}] 테이블 초기화 완료: {self.full_table_name}")
             
             return True
             
@@ -514,12 +503,12 @@ class H2022VectorStore(VectorStoreBase):
             logger.error(f"[{self.name}] 테이블 초기화 실패: {str(e)}")
             return False
     
-    def get_vector_by_id(self, vector_id: str) -> Optional[Tuple[List[float], Dict[str, Any]]]:
+    def get_vector_by_id(self, vector_id: int) -> Optional[Tuple[List[float], Dict[str, Any]]]:
         """
         ID로 벡터 조회
         
         Args:
-            vector_id: 조회할 벡터 ID
+            vector_id: 조회할 벡터 ID (integer)
             
         Returns:
             (벡터, 메타데이터) 튜플 또는 None
@@ -529,10 +518,9 @@ class H2022VectorStore(VectorStoreBase):
                 cursor.execute(f"""
                     SELECT 
                         embedding, content, page_number, total_pages,
-                        document_type, year, section, category,
-                        has_table, has_code_values, is_variable_definition,
-                        chunk_index, chunk_id, metadata
-                    FROM {self.table_name}
+                        document_type, section, category,
+                        has_table, chunk_index, metadata
+                    FROM {self.full_table_name}
                     WHERE id = %s;
                 """, (vector_id,))
                 
@@ -546,14 +534,10 @@ class H2022VectorStore(VectorStoreBase):
                         'page_number': result.get('page_number'),
                         'total_pages': result.get('total_pages'),
                         'document_type': result.get('document_type'),
-                        'year': result.get('year'),
                         'section': result.get('section'),
                         'category': result.get('category'),
                         'has_table': result.get('has_table'),
-                        'has_code_values': result.get('has_code_values'),
-                        'is_variable_definition': result.get('is_variable_definition'),
-                        'chunk_index': result.get('chunk_index'),
-                        'chunk_id': result.get('chunk_id')
+                        'chunk_index': result.get('chunk_index')
                     })
                     
                     return (vector, full_metadata)
@@ -568,7 +552,7 @@ class H2022VectorStore(VectorStoreBase):
         self,
         page_number: int,
         top_k: int = 100
-    ) -> List[Tuple[str, Dict[str, Any]]]:
+    ) -> List[Tuple[int, Dict[str, Any]]]:
         """
         특정 페이지의 모든 청크 조회
         
@@ -584,10 +568,9 @@ class H2022VectorStore(VectorStoreBase):
                 cursor.execute(f"""
                     SELECT 
                         id, content, page_number, total_pages,
-                        document_type, year, section, category,
-                        has_table, has_code_values, is_variable_definition,
-                        chunk_index, chunk_id, metadata
-                    FROM {self.table_name}
+                        document_type, section, category,
+                        has_table, chunk_index, metadata
+                    FROM {self.full_table_name}
                     WHERE page_number = %s
                     ORDER BY chunk_index
                     LIMIT %s;
@@ -604,14 +587,10 @@ class H2022VectorStore(VectorStoreBase):
                     'page_number': row.get('page_number'),
                     'total_pages': row.get('total_pages'),
                     'document_type': row.get('document_type'),
-                    'year': row.get('year'),
                     'section': row.get('section'),
                     'category': row.get('category'),
                     'has_table': row.get('has_table'),
-                    'has_code_values': row.get('has_code_values'),
-                    'is_variable_definition': row.get('is_variable_definition'),
-                    'chunk_index': row.get('chunk_index'),
-                    'chunk_id': row.get('chunk_id')
+                    'chunk_index': row.get('chunk_index')
                 })
                 
                 search_results.append((row['id'], full_metadata))

@@ -16,7 +16,6 @@ from base.rag.preprocessor_base import PreprocessorBase, Chunk
 from base.rag.vector_store_base import VectorStoreBase
 from base.rag.indexer_base import IndexerBase
 from base.rag.retriever_base import RetrieverBase, SearchResult
-from base.rag.reranker_base import RerankerBase, RerankResult
 
 
 __all__ = [
@@ -27,7 +26,7 @@ __all__ = [
     'VectorStoreBase',
     'IndexerBase',
     'RetrieverBase',
-    'RerankerBase',
+
     
     # 데이터 클래스
     'Document',

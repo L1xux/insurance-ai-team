@@ -13,9 +13,9 @@ MEPS 2022년 보험 데이터에 특화된 분석 기능을 제공합니다.
 from typing import Dict, Any, Optional
 import pandas as pd
 
-from base.data_analyzer_base import DataAnalyzerBase
+from base.agent.data_analyzer_base import DataAnalyzerBase
 from models.insurance_model import InsuranceDataBatch
-from services.insurance.h2022.insurance_2022_data_loader import Insurance2022DataLoader
+from utils.data.insurance_2022_data_loader import Insurance2022DataLoader
 from config.logging_config import logger
 
 

@@ -88,12 +88,13 @@ class OpenAIEmbedder(EmbeddingBase):
             logger.error(f"[{self.model_name}] 임베딩 실패: {str(e)}")
             raise
     
-    def embed_texts(self, texts: List[str]) -> List[List[float]]:
+    def embed_texts(self, texts: List[str], batch_size: int = 500) -> List[List[float]]:
         """
         여러 텍스트를 벡터로 변환 (배치 처리)
         
         Args:
             texts: 임베딩할 텍스트 리스트
+            batch_size: 한 번에 처리할 배치 크기 (기본값: 500, 최대 2048)
             
         Returns:
             임베딩 벡터 리스트
@@ -102,6 +103,8 @@ class OpenAIEmbedder(EmbeddingBase):
             if not texts:
                 logger.warning(f"[{self.model_name}] 빈 텍스트 리스트가 입력되었습니다.")
                 return []
+            
+            logger.info(f"[{self.model_name}] 총 {len(texts)}개 텍스트 임베딩 시작 (배치 크기: {batch_size})")
             
             # 빈 텍스트 필터링 및 인덱스 추적
             valid_texts = []
@@ -115,21 +118,54 @@ class OpenAIEmbedder(EmbeddingBase):
                 logger.warning(f"[{self.model_name}] 모든 텍스트가 비어있습니다. 0 벡터를 반환합니다.")
                 return [[0.0] * self.dimension for _ in texts]
             
-            # OpenAI API 호출 (배치)
-            response = self.client.embeddings.create(
-                model=self.model_name,
-                input=valid_texts,
-                dimensions=self.dimension if "text-embedding-3" in self.model_name else None
-            )
+            # 결과 저장용 리스트 초기화
+            all_embeddings = []
+            
+            # 배치로 나누어 처리
+            total_batches = (len(valid_texts) + batch_size - 1) // batch_size
+            
+            for batch_idx in range(0, len(valid_texts), batch_size):
+                batch_texts = valid_texts[batch_idx:batch_idx + batch_size]
+                current_batch_num = (batch_idx // batch_size) + 1
+                
+                # 진행률 계산
+                processed_so_far = batch_idx
+                progress_percent = (processed_so_far / len(valid_texts)) * 100
+                
+                logger.info(
+                    f"[{self.model_name}] 배치 {current_batch_num}/{total_batches} 처리 중 "
+                    f"({len(batch_texts)}개 텍스트) | "
+                    f"진행: {processed_so_far}/{len(valid_texts)} ({progress_percent:.1f}%)"
+                )
+                
+                # OpenAI API 호출 (배치)
+                response = self.client.embeddings.create(
+                    model=self.model_name,
+                    input=batch_texts,
+                    dimensions=self.dimension if "text-embedding-3" in self.model_name else None
+                )
+                
+                # 이 배치의 임베딩 결과 저장
+                batch_embeddings = [item.embedding for item in response.data]
+                all_embeddings.extend(batch_embeddings)
+                
+                # 완료 후 진행률 업데이트
+                processed_after = batch_idx + len(batch_texts)
+                progress_percent_after = (processed_after / len(valid_texts)) * 100
+                
+                logger.info(
+                    f"[{self.model_name}] 배치 {current_batch_num}/{total_batches} 완료 ✓ | "
+                    f"누적: {processed_after}/{len(valid_texts)} ({progress_percent_after:.1f}%)"
+                )
             
             # 결과를 원래 순서에 맞게 재구성
-            embeddings = [[0.0] * self.dimension] * len(texts)
+            embeddings = [[0.0] * self.dimension for _ in range(len(texts))]
             for idx, valid_idx in enumerate(valid_indices):
-                embeddings[valid_idx] = response.data[idx].embedding
+                embeddings[valid_idx] = all_embeddings[idx]
             
             self.embedding_count += len(valid_texts)
             
-            logger.info(f"[{self.model_name}] 배치 임베딩 완료: {len(valid_texts)}개 텍스트")
+            logger.info(f"[{self.model_name}] 전체 임베딩 완료: {len(valid_texts)}개 텍스트 처리됨")
             
             return embeddings
             

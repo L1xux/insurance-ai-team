@@ -16,7 +16,7 @@ from config.logging_config import logger
 
 
 class IndexerBase(ABC):
-    """인덱서 베이스 클래스 - 문서 인덱싱 파이프라인"""
+    """인덱서 베이스 클래스"""
     
     def __init__(
         self,
@@ -68,15 +68,6 @@ class IndexerBase(ABC):
         """
         pass
     
-    @abstractmethod
-    def rebuild_index(self) -> bool:
-        """
-        인덱스 재구축
-        
-        Returns:
-            재구축 성공 여부
-        """
-        pass
     
     def get_stats(self) -> Dict[str, Any]:
         """

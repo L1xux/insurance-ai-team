@@ -3,52 +3,42 @@ H2022 임베딩 래퍼
 =========================
 Author: Jin
 Date: 2025.10.12
-Version: 1.0
+Version: 1.1
 
 Description:
 H2022 보험 문서용 임베딩 래퍼입니다.
-OpenAI 임베딩을 사용하여 h2022 전용 설정을 제공합니다.
 """
-import os
-from typing import List, Optional
-
-from dotenv import load_dotenv
+from typing import List
 
 from base.rag.embedding_base import EmbeddingBase
-from rag.common.openai_embedder import OpenAIEmbedder
 from config.logging_config import logger
 
-load_dotenv()
 
 class H2022Embedding(EmbeddingBase):
-    """H2022 전용 임베딩 클래스"""
+    """H2022 전용 임베딩 클래스 - DI 패턴 적용"""
     
     def __init__(
         self,
-        model_name: str = "text-embedding-3-small",
-        dimension: int = 1536,
+        embedder: EmbeddingBase,
     ):
         """
         H2022 임베딩 초기화
         
         Args:
-            model_name: 사용할 OpenAI 임베딩 모델명
-            dimension: 임베딩 차원 (기본값: 1536)
+            embedder: 사용할 임베딩 모델 (EmbeddingBase 구현체)
+                     예: OpenAIEmbedder, OllamaEmbedder 등
         
-        Note:
-            OpenAI API 키는 환경변수 OPENAI_API_KEY에서 자동으로 로드됩니다.
         """
-        super().__init__(model_name=model_name, dimension=dimension)
-        
-        self.embedder = OpenAIEmbedder(
-            model_name=model_name,
-            api_key=os.getenv("OPENAI_API_KEY"),
-            dimension=dimension
+        super().__init__(
+            model_name=f"H2022-{embedder.model_name}",
+            dimension=embedder.dimension
         )
+        
+        self.embedder = embedder
         
         logger.info(
             f"[H2022Embedding] H2022 임베딩 초기화 완료 "
-            f"(model={model_name}, dimension={dimension})"
+            f"(embedder={embedder.model_name}, dimension={embedder.dimension})"
         )
     
     def embed_text(self, text: str) -> List[float]:

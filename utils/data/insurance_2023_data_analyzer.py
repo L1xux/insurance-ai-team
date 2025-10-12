@@ -10,11 +10,10 @@ Description:
 """
 from typing import Dict, Any, Optional
 
-from base.data_analyzer_base import DataAnalyzerBase
 from models.insurance_model import InsuranceDataBatch
-from services.insurance.h2023.insurance_2023_data_loader import Insurance2023DataLoader
 from config.logging_config import logger
-
+from utils.data.insurance_2023_data_loader import Insurance2023DataLoader
+from base.agent.data_analyzer_base import DataAnalyzerBase
 
 class Insurance2023DataAnalyzer(DataAnalyzerBase):
     """2023 보험 데이터 전용 분석기"""

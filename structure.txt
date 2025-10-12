@@ -1,0 +1,501 @@
+프로젝트 아키텍처 구조 설명
+===============================
+Author: Jin
+Date: 2025.10.11
+Version: 2.1
+
+프로젝트 개요
+-----------
+이 프로젝트는 CSV 데이터를 분석하고 LLM(Large Language Model)을 활용하여 
+자동으로 시각화를 생성하는 FastAPI 기반 웹 애플리케이션입니다.
+다양한 데이터 소스(보험, 리뷰)를 처리하고 OpenAI/Ollama LLM을 통해 
+Python 코드를 생성하여 데이터 시각화를 자동화합니다.
+
+
+===========================
+1. 루트 디렉토리 파일들
+===========================
+
+📄 main.py (구버전)
+  - 역할: 이전 버전의 메인 실행 파일 (현재는 server.py가 대체)
+  - 기능: 기존 CLI 기반 데이터 분석 로직
+
+📄 server.py ⭐ (현재 버전)
+  - 역할: FastAPI 기반 웹 서버 메인 엔트리포인트
+  - 기능:
+    * 웹 UI를 통한 데이터 분석 실행
+    * CSV 파일 선택 및 LLM 모델 선택
+    * 분석 결과 시각화를 Base64로 인코딩하여 웹에 표시
+    * Kubernetes 다중 Pod 환경 지원
+  - 엔드포인트:
+    * GET  /          - 웹 UI 페이지
+    * POST /run       - 데이터 분석 실행
+    * GET  /files     - 사용 가능한 CSV 파일 목록
+    * GET  /models    - 사용 가능한 LLM 모델 목록
+    * GET  /health    - 헬스 체크
+    * GET  /debug/env - 환경 변수 디버깅
+
+📄 requirements.txt
+  - 역할: Python 패키지 의존성 목록
+  - 주요 패키지:
+    * 데이터 처리: pandas, numpy, scipy
+    * 시각화: matplotlib, seaborn
+    * LLM: openai
+    * 웹: fastapi, uvicorn
+
+📄 pyproject.toml
+  - 역할: Python 프로젝트 설정 파일
+  - 내용:
+    * 프로젝트 메타데이터
+    * 의존성 관리
+    * 개발 도구 설정 (mypy, black, isort, flake8, pytest)
+
+📄 mypy.ini
+  - 역할: MyPy 타입 체커 설정 파일
+  - 기능: 정적 타입 검사 규칙 정의
+
+📄 py.typed
+  - 역할: PEP 561 타입 힌트 마커 파일
+  - 기능: 이 패키지가 타입 정보를 제공함을 표시
+
+📄 env.properties
+  - 역할: 환경 변수 설정 파일
+  - 내용: API 키, 설정값 등
+
+📄 DataAnalysis.log
+  - 역할: 애플리케이션 로그 파일
+  - 내용: 실행 중 발생한 모든 로그 기록
+
+
+===========================
+2. DevOps 관련 파일들
+===========================
+
+📄 Dockerfile
+  - 역할: Docker 컨테이너 이미지 빌드 설정
+  - 기능: Python 환경 및 애플리케이션 컨테이너화
+
+📄 docker-build.sh
+  - 역할: Docker 이미지 빌드 자동화 스크립트
+  - 기능: 이미지 빌드 명령어 실행
+
+📄 docker-push.sh
+  - 역할: Docker 이미지를 레지스트리에 푸시하는 스크립트
+  - 기능: 빌드된 이미지를 Docker Hub 또는 사설 레지스트리에 업로드
+
+📄 Jenkinsfile
+  - 역할: Jenkins CI/CD 파이프라인 설정
+  - 기능: 자동 빌드, 테스트, 배포 파이프라인 정의
+
+📁 k8s/
+  - 역할: Kubernetes 배포 매니페스트 디렉토리
+  - 파일:
+    * deploy.yaml  - Deployment 리소스 (Pod 배포)
+    * service.yaml - Service 리소스 (네트워크 노출)
+    * ingress.yaml - Ingress 리소스 (외부 접근)
+    * secret.yaml  - Secret 리소스 (API 키 등 민감 정보)
+
+
+===========================
+3. 코어 아키텍처 디렉토리
+===========================
+
+📁 base/
+  - 역할: 추상 기본 클래스(ABC) 정의 디렉토리
+  - 설계 패턴: Template Method Pattern, Strategy Pattern
+  - 파일:
+    * data_analyzer_base.py  - 데이터 분석기의 추상 기본 클래스
+    * data_loader_base.py    - 데이터 로더의 추상 기본 클래스
+    * document_base.py       - 문서 처리의 추상 기본 클래스
+    * embedding_base.py      - 임베딩 모델의 추상 기본 클래스
+    * llm_base.py            - LLM 클라이언트의 추상 기본 클래스
+    * model_base.py          - 데이터 모델의 추상 기본 클래스
+    * service_base.py        - 서비스의 추상 기본 클래스
+  - 목적: 
+    * 일관된 인터페이스 제공
+    * 코드 재사용성 향상
+    * 다형성 구현
+
+
+📁 models/
+  - 역할: 데이터 모델 정의 (데이터 구조 표현)
+  - 설계 패턴: Data Transfer Object (DTO)
+  - 파일:
+    * document_model.py  - 문서 데이터 모델
+    * insurance_model.py - 보험 데이터 모델 (미국 보험 데이터)
+    * review_model.py    - 리뷰 데이터 모델
+  - 목적:
+    * 타입 안정성
+    * 데이터 검증
+    * 명확한 데이터 구조
+
+
+📁 factories/
+  - 역할: 객체 생성 로직 캡슐화
+  - 설계 패턴: Factory Pattern
+  - 파일:
+    * llm_factory.py     - LLM 클라이언트 생성 팩토리
+    * service_factory.py - 서비스 객체 생성 팩토리
+  - 목적:
+    * 객체 생성 로직 중앙화
+    * 의존성 주입
+    * 동적 객체 생성 (CSV 파일명에 따라 적절한 서비스 자동 선택)
+
+
+===========================
+4. LLM 관련 디렉토리
+===========================
+
+📁 agents/
+  - 역할: LLM API 클라이언트 구현체
+  - 파일:
+    * llm_openai.py  - OpenAI API 클라이언트 (GPT-4, GPT-3.5 등)
+    * llm_ollama.py  - Ollama API 클라이언트 (로컬 LLM: llama3.2, qwen2.5 등)
+  - 기능:
+    * LLM API 호출
+    * 프롬프트 전송 및 응답 수신
+    * 에러 핸들링
+
+
+📁 embeddings/
+  - 역할: 텍스트 임베딩 모델 구현체
+  - 파일:
+    * openai_embedding.py  - OpenAI Embedding API
+    * ollama_embedding.py  - Ollama Embedding API
+    * qwen_embedding.py    - Qwen 모델 임베딩
+  - 기능:
+    * 텍스트를 벡터로 변환
+    * RAG(Retrieval-Augmented Generation)에 사용
+
+
+===========================
+5. 서비스 레이어 디렉토리
+===========================
+
+📁 services/
+  - 역할: 비즈니스 로직 구현 (애플리케이션의 핵심 기능)
+  - 구조: 도메인별로 분리
+
+  📁 services/insurance/
+    - 역할: 보험 데이터 분석 서비스
+    - 하위 디렉토리:
+      
+      📁 h2022/  (2022년 데이터)
+        * insurance_2022_data_loader.py   - CSV 데이터 로드
+        * insurance_2022_data_analyzer.py - 통계 분석 (평균, 중앙값, 상관관계 등)
+        * insurance_2022_service.py       - 서비스 조합 (로더 + 분석기)
+      
+      📁 h2023/  (2023년 데이터)
+        * insurance_2023_data_loader.py   - CSV 데이터 로드
+        * insurance_2023_data_analyzer.py - 통계 분석
+        * insurance_2023_service.py       - 서비스 조합
+    
+    - 분석 내용:
+      * 나이별 보험료 분석
+      * BMI와 보험료 상관관계
+      * 흡연 여부에 따른 보험료 차이
+      * 지역별 보험료 비교
+      * 자녀 수와 보험료 관계
+
+  📁 services/review/
+    - 역할: 리뷰 데이터 분석 서비스
+    - 파일:
+      * review_data_loader.py   - 리뷰 CSV 로드
+      * review_data_analyzer.py - 리뷰 통계 분석
+      * review_service.py       - 서비스 조합
+    - 분석 내용:
+      * 평점 분포
+      * 리뷰 텍스트 길이 분석
+      * 긍정/부정 리뷰 비율
+
+  📁 services/llm/
+    - 역할: LLM 기반 시각화 코드 생성 서비스
+    - 파일:
+      * llm_service.py            - LLM 메인 서비스 (코드 생성 오케스트레이션)
+      * code_processor.py         - 생성된 코드 전처리/후처리
+      * visualization_generator.py - 시각화 코드 실행 및 이미지 생성
+    - 기능:
+      * 분석 결과를 LLM에 전달
+      * LLM이 Python 시각화 코드 생성 (matplotlib/seaborn)
+      * 생성된 코드 실행하여 PNG 이미지 저장
+
+  📁 services/rag/
+    - 역할: RAG (Retrieval-Augmented Generation) 서비스
+    - 파일:
+      * document_loader.py  - 문서 로드
+      * text_splitter.py    - 문서를 청크로 분할
+      * retriever.py        - 벡터 DB에서 관련 문서 검색
+      * rag_service.py      - RAG 파이프라인 조합
+    - 기능:
+      * 문서를 벡터 DB에 저장
+      * 쿼리에 관련된 문서 검색
+      * LLM에 컨텍스트와 함께 질문 전달
+
+
+===========================
+6. 데이터 및 출력 디렉토리
+===========================
+
+📁 data/
+  - 역할: 원본 데이터 저장소
+  - 파일:
+    * insurance_US_2022.csv  - 2022년 미국 보험 데이터
+    * insurance_US_2023.csv  - 2023년 미국 보험 데이터
+    * reviews_1000.csv       - 리뷰 데이터 (1000개)
+  
+  📁 data/visualizations/
+    - 역할: LLM이 생성한 시각화 이미지 저장
+    - 파일명 형식: visualization_YYYYMMDD_HHMMSS.png
+
+📁 outputs/
+  - 역할: 기타 출력 파일 저장 (현재 비어있음)
+
+
+===========================
+7. 유틸리티 디렉토리
+===========================
+
+📁 utils/
+  - 역할: 공통 유틸리티 함수 및 헬퍼 클래스
+
+  📁 utils/handler/
+    - 역할: 데이터 및 모델 핸들러
+    - 파일:
+      * csv_handler.py            - CSV 파일 검색 및 관리
+      * llm_model_handler.py      - 사용 가능한 LLM 모델 목록 관리
+      * embedding_model_handler.py - 임베딩 모델 관리
+  
+  📄 utils/profiler.py
+    - 역할: 성능 프로파일링 도구
+    - 기능: 함수 실행 시간 측정
+
+
+===========================
+8. 설정 디렉토리
+===========================
+
+📁 config/
+  - 역할: 애플리케이션 설정 관리
+  - 파일:
+    * settings.py       - 전역 설정값 (API 키, 경로 등)
+    * logging_config.py - 로깅 설정 (포맷, 레벨, 핸들러)
+
+
+===========================
+9. 데이터베이스 디렉토리
+===========================
+
+📁 database/
+  - 역할: 데이터베이스 연결 및 벡터 저장소
+  - 파일:
+    * db_connection.py - 데이터베이스 연결 관리
+    * vector_store.py  - 벡터 데이터베이스 (Chroma, FAISS 등)
+  - 용도:
+    * RAG 시스템의 벡터 저장소
+    * 임베딩 벡터 저장 및 검색
+
+
+===========================
+아키텍처 설계 원칙
+===========================
+
+1. 계층형 아키텍처 (Layered Architecture)
+   ┌─────────────────────────────────────┐
+   │  Presentation Layer (server.py)     │  ← FastAPI 웹 인터페이스
+   ├─────────────────────────────────────┤
+   │  Service Layer (services/)          │  ← 비즈니스 로직
+   ├─────────────────────────────────────┤
+   │  Domain Layer (models/)             │  ← 데이터 모델
+   ├─────────────────────────────────────┤
+   │  Infrastructure Layer (database/)   │  ← DB, 외부 API
+   └─────────────────────────────────────┘
+
+2. 관심사의 분리 (Separation of Concerns)
+   - 데이터 로드 (Loader)
+   - 데이터 분석 (Analyzer)
+   - LLM 통신 (Agents)
+   - 코드 실행 (Processor)
+   각 책임이 독립적인 클래스로 분리
+
+3. 의존성 역전 원칙 (Dependency Inversion)
+   - 구체적인 구현 대신 추상 인터페이스(base/)에 의존
+   - 런타임에 Factory를 통해 구현체 주입
+
+4. 개방-폐쇄 원칙 (Open-Closed Principle)
+   - 새로운 데이터 타입 추가 시 기존 코드 수정 없이 확장 가능
+   - 예: 새로운 년도 데이터 → 새 디렉토리 추가 (h2024/)
+
+5. 단일 책임 원칙 (Single Responsibility)
+   - 각 클래스는 하나의 책임만 가짐
+   - 예: Loader는 로딩만, Analyzer는 분석만
+
+
+===========================
+데이터 흐름 (Data Flow)
+===========================
+
+1. 웹 요청 수신
+   사용자 → server.py (POST /run)
+
+2. 파일 및 모델 선택
+   server.py → ServiceFactory → 적절한 Service 선택
+   (insurance_2023_service or review_service)
+
+3. 데이터 로드 및 분석
+   Service → Loader (CSV 읽기)
+         → Analyzer (통계 분석)
+         → 분석 결과 반환
+
+4. LLM 시각화 코드 생성
+   server.py → LLMService
+           → LLM Agent (OpenAI/Ollama)
+           → 시각화 코드 생성
+
+5. 코드 실행 및 이미지 저장
+   LLMService → CodeProcessor (코드 정제)
+              → VisualizationGenerator (exec() 실행)
+              → PNG 이미지 저장
+
+6. 결과 반환
+   이미지 → Base64 인코딩 → JSON 응답 → 웹 브라우저에 표시
+
+
+===========================
+주요 기술 스택
+===========================
+
+Backend:
+  - FastAPI (웹 프레임워크)
+  - Uvicorn (ASGI 서버)
+  - Pandas (데이터 처리)
+  - Matplotlib/Seaborn (시각화)
+
+AI/LLM:
+  - OpenAI API (GPT-4, GPT-3.5-turbo)
+  - Ollama (로컬 LLM)
+  - 텍스트 임베딩 모델
+
+DevOps:
+  - Docker (컨테이너화)
+  - Kubernetes (오케스트레이션)
+  - Jenkins (CI/CD)
+
+Data Storage:
+  - CSV 파일 (원본 데이터)
+  - 벡터 데이터베이스 (RAG용)
+
+
+===========================
+확장 가능성
+===========================
+
+1. 새로운 데이터 소스 추가
+   - services/ 하위에 새 디렉토리 생성
+   - Base 클래스 상속하여 Loader/Analyzer 구현
+   - ServiceFactory에 탐지 로직 추가
+
+2. 새로운 LLM 프로바이더 추가
+   - agents/ 에 새 LLM 클라이언트 추가
+   - llm_base.py 상속
+   - llm_factory.py에 등록
+
+3. 새로운 분석 기능 추가
+   - Analyzer 클래스에 메서드 추가
+   - 기존 코드 수정 없이 확장 가능
+
+4. 다른 언어 지원
+   - LLM 프롬프트만 수정하여 다국어 지원 가능
+
+
+===========================
+보안 고려사항
+===========================
+
+- API 키는 환경 변수로 관리 (env.properties, Kubernetes Secret)
+- 사용자 입력 검증 (파일 경로, LLM 모델명)
+- 생성된 코드 실행 시 샌드박스 환경 권장 (현재는 exec() 직접 실행)
+- CORS 설정으로 웹 접근 제어
+
+
+===========================
+모니터링 및 로깅
+===========================
+
+- 모든 중요 작업은 로그 기록 (DataAnalysis.log)
+- FastAPI 헬스 체크 엔드포인트 (/health)
+- 환경 변수 디버깅 엔드포인트 (/debug/env)
+- Kubernetes Liveness/Readiness Probe 지원
+
+
+===========================
+프로젝트 실행 방법
+===========================
+
+# 로컬 실행
+python server.py --port 8080
+
+# Docker 실행
+docker build -t data-analysis-app .
+docker run -p 8080:8080 -e OPENAI_API_KEY=xxx data-analysis-app
+
+# Kubernetes 배포
+kubectl apply -f k8s/secret.yaml
+kubectl apply -f k8s/deploy.yaml
+kubectl apply -f k8s/service.yaml
+kubectl apply -f k8s/ingress.yaml
+
+# 웹 UI 접속
+http://localhost:8080
+
+
+===========================
+프로젝트 구조 요약
+===========================
+
+project/
+├── 🌐 Presentation Layer
+│   ├── server.py            (FastAPI 웹 서버)
+│   └── main.py              (구버전 CLI)
+│
+├── 🔧 Service Layer
+│   └── services/
+│       ├── insurance/       (보험 데이터 분석)
+│       ├── review/          (리뷰 데이터 분석)
+│       ├── llm/             (LLM 시각화 생성)
+│       └── rag/             (RAG 검색 증강)
+│
+├── 🏗️ Core Architecture
+│   ├── base/                (추상 기본 클래스)
+│   ├── models/              (데이터 모델)
+│   └── factories/           (객체 생성 팩토리)
+│
+├── 🤖 AI Layer
+│   ├── agents/              (LLM API 클라이언트)
+│   └── embeddings/          (임베딩 모델)
+│
+├── 💾 Data Layer
+│   ├── data/                (원본 CSV 데이터)
+│   └── database/            (벡터 DB 연결)
+│
+├── ⚙️ Infrastructure
+│   ├── config/              (설정 관리)
+│   ├── utils/               (유틸리티)
+│   ├── k8s/                 (쿠버네티스 매니페스트)
+│   ├── Dockerfile           (컨테이너 이미지)
+│   └── Jenkinsfile          (CI/CD 파이프라인)
+│
+└── 📦 Package Management
+    ├── requirements.txt     (의존성)
+    ├── pyproject.toml       (프로젝트 설정)
+    └── mypy.ini             (타입 체크)
+
+
+이 프로젝트는 확장 가능하고 유지보수가 용이한 
+클린 아키텍처를 따르며, 현대적인 Python 개발 
+모범 사례를 적용하였습니다.
+
+===============================
+문서 작성: 2025.10.11
+프로젝트 버전: 2.1
+===============================
+

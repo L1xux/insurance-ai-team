@@ -21,3 +21,10 @@ flake8
 fastapi
 uvicorn
 python-multipart
+
+psycopg2-binary
+pgvector
+chromadb
+requests
+PyPDF2
+faiss-cpu

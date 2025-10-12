@@ -13,7 +13,7 @@ from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional
 
 from base.data_loader_base import DataLoaderBase
-from base.data_analyzer_base import DataAnalyzerBase
+from base.agent.data_analyzer_base import DataAnalyzerBase
 from config.logging_config import logger
 
 

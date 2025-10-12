@@ -64,14 +64,13 @@ class H2022VectorStore(VectorStoreBase):
                 # pgvector 확장 활성화
                 cursor.execute("CREATE EXTENSION IF NOT EXISTS vector;")
                 
-                # 테이블 생성 (H2022Document 모델 반영)
+                # 테이블 생성 
                 cursor.execute(f"""
                     CREATE TABLE IF NOT EXISTS {self.table_name} (
                         id TEXT PRIMARY KEY,
                         embedding vector({self.dimension}),
                         content TEXT,
                         
-                        -- H2022Document 핵심 필드
                         page_number INT,
                         total_pages INT,
                         document_type TEXT DEFAULT 'MEPS_HC243_2022',

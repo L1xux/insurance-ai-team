@@ -139,7 +139,7 @@ class EmbeddingModelHandler:
         self.selected_model = model
         self.selected_dimension = dimension
         
-        print(f"✓ 선택 완료: {provider.upper()} - {model} (차원: {dimension})")
+        print(f"선택 완료: {provider.upper()} - {model} (차원: {dimension})")
         return (provider, model, dimension)
     
     def get_dimension(self, model: str) -> Optional[int]:

@@ -1,26 +1,31 @@
 """
-Manager Agent - Orchestrator
+Insurance Manager Agent
 =========================
 Author: Jin
-Date: 2025.10.12
-Version: 1.0
+Date: 2026.02.07
+Version: 5.0 (Final Correction)
 
 Description:
-Worker Agent들을 orchestrate하는 Manager Agent입니다.
-LCEL을 사용하여 plan 수립 및 실행을 관리합니다.
+보험 분석 및 기획을 총괄하는 Manager Agent입니다.
+Ragas 평가는 외부에서 수행할 수 있도록 결과와 출처 데이터를 멤버 변수에 저장합니다.
+Worker에게 Summary와 Full Result를 모두 전달하여 Worker가 스스로 컨텍스트를 최적화하도록 지원합니다.
 """
 from typing import Dict, Any, Optional, List
+import json
 
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import PydanticOutputParser
 
 from base.agent.agent_base import ManagerAgent, WorkerAgent
 from base.agent.llm_base import LLMBase
-from models.agent_model import AgentResult, ExecutionPlan
 from config.logging_config import logger
+from models.agent_model import AgentResult, ExecutionPlan
 
 class InsuranceManagerAgent(ManagerAgent):
-    """보험 데이터 분석 Manager Agent"""
+    """보험 데이터 분석 및 기획 Manager Agent"""
     
+    MAX_ITERATIONS = 5
+
     def __init__(
         self,
         name: str,
@@ -28,100 +33,82 @@ class InsuranceManagerAgent(ManagerAgent):
         worker_agents: List[WorkerAgent],
         llm: LLMBase
     ):
-        """
-        Manager Agent 초기화
-        
-        Args:
-            name: Agent 이름
-            description: Agent 설명
-            worker_agents: Worker Agent 리스트
-            llm: LLM 인스턴스
-        """
+        """Manager Agent 초기화"""
         super().__init__(name, description, worker_agents, llm) 
         
-        # Chain 구성
-        self._setup_chains()
+        # 외부 접근을 위한 결과 저장소
+        self.result: Optional[str] = None
+        self.sources: List[Dict[str, Any]] = []
+        self.evidence: List[str] = []
         
-        logger.info(f"[{self.name}] Manager Agent 초기화 완료")
+        self._setup_chains()
+        logger.info(f"[{self.name}] 초기화 완료")
     
     def _setup_chains(self) -> None:
         """체인 구성"""
-        
-        # LLMBase 구현체로부터 모델 가져오기
         self.chat_model = self.llm.get_model()
         if not self.chat_model:
-            logger.warning(f"[{self.name}] 모델 없음 - Chain 구성 불가")
+            logger.warning(f"[{self.name}] 모델 없음")
             return
         
         # Worker Agent 정보
         worker_info = self._get_worker_info_text()
         
-        # Structured output을 위한 Chat Model 설정 (function_calling 모드 사용)
+        # Structured output 설정
         structured_llm = self.chat_model.with_structured_output(
             ExecutionPlan,
-            method="function_calling"  # 더 유연한 function calling 모드
+            method="function_calling"
         )
         
-        # Planning Chain
+        # Planning Prompt
         planning_prompt = ChatPromptTemplate.from_messages([
-            ("system", """당신은 보험 데이터 분석 작업을 계획하는 Manager Agent입니다.
+            ("system", """당신은 유능한 보험 프로젝트 매니저입니다.
+당신의 목표는 사용자 요청을 해결하기 위해 하위 전문가들을 적절히 조합하여 업무를 배분하는 것입니다.
 
-사용 가능한 Worker Agents:
+사용 가능한 전문가 목록:
 {worker_info}
 
-작업 계획 수립 지침:
-1. 복잡한 분석 요청은 가능한 한 하나의 작업으로 통합하세요
-2. 각 Worker Agent는 여러 도구를 순차적으로 사용할 수 있습니다
-3. 데이터 분석 + RAG 분석이 필요한 경우, 하나의 작업으로 요청하세요
-4. 작업 설명(description)에 구체적인 요구사항을 모두 포함하세요
-   예: "데이터 분석 후 RAG로 해석하고 인사이트 제공"
+작업 계획 수립 가이드:
 
-ExecutionPlan 형식:
-- analysis: 사용자 요청 분석
-- tasks: 작업 계획 리스트
-  - task_id: 고유 ID (예: "task_1")
-  - agent_name: Worker Agent 이름
-  - description: 작업 설명 (구체적이고 상세하게)
-  - query: 작업에 필요한 주요 쿼리 (Optional)
+1. 요청 분석: 사용자가 원하는 것이 단순 분석인지, 기획인지, 아니면 시장 조사인지 파악하십시오.
+2. 최적의 전문가 선택:
+   - 데이터 분석이 필요하면 customer_analyst를 호출하세요.
+   - 시장 조사나 상품 기획이 필요하면 product_planner를 호출하세요.
+   - 두 가지 모두 필요하다면, 논리적인 순서를 결정하세요.
+3. 불필요한 단계 생략: 필요한 작업만 계획에 포함하세요.
+
+ExecutionPlan 출력 형식:
+- analysis: 사용자의 의도와 작업 흐름에 대한 당신의 판단
+- tasks: 실행할 작업 목록
+  - agent_name: 호출할 Worker 이름
+  - description: Worker에게 지시할 구체적인 작업 내용
 """),
             ("user", "{user_request}")
         ])
         
         self.planning_chain = planning_prompt | structured_llm
-        
-        logger.info(f"[{self.name}] Planning Chain 구성 완료 (Function Calling)")
+        logger.info(f"[{self.name}] Planning Chain 구성 완료")
     
     def _get_worker_info_text(self) -> str:
         """Worker Agent 정보를 텍스트로 변환"""
         info_lines = []
         for worker in self.worker_agents.values():
-            tools = list(worker.tools.keys())
-            info_lines.append(f"- {worker.name}: {worker.description} (Tools: {', '.join(tools)})")
+            info_lines.append(f"- [{worker.name}]: {worker.description}")
         return "\n".join(info_lines)
     
     async def plan(self, user_request: str) -> List:
-        """
-        작업 계획 수립
-        
-        Args:
-            user_request: 사용자 요청
-            
-        Returns:
-            작업 계획 리스트 (TaskPlan 객체들)
-        """
+        """작업 계획 수립"""
         try:
             logger.info(f"[{self.name}] 작업 계획 수립 시작")
             
-            # Planning Chain 실행 (ExecutionPlan 반환)
             execution_plan = await self.planning_chain.ainvoke({
                 "worker_info": self._get_worker_info_text(),
                 "user_request": user_request
             })
             
             logger.info(f"[{self.name}] 계획 수립 완료: {len(execution_plan.tasks)}개 작업")
-            logger.info(f"[{self.name}] 분석: {execution_plan.analysis}")
             
-            return execution_plan.tasks  # Pydantic 객체의 속성 접근
+            return execution_plan.tasks
             
         except Exception as e:
             logger.error(f"[{self.name}] 계획 수립 실패: {str(e)}")
@@ -133,26 +120,29 @@ ExecutionPlan 형식:
         context: Optional[Dict[str, Any]] = None
     ) -> AgentResult:
         """
-        요청 처리: plan → worker 실행 → 결과 통합
-        
-        Args:
-            message: 사용자 요청
-            context: 컨텍스트
-            
-        Returns:
-            최종 결과
+        요청 처리: Plan -> Execute -> Aggregate
         """
         try:
             logger.info(f"[{self.name}] 요청 처리 시작: {message[:50]}...")
             
+            # 초기화
+            self.result = None
+            self.sources = []
+            self.evidence = []
+            
             # 1. Plan 수립
             tasks = await self.plan(message)
             
-            # 2. Worker 실행 
             results = []
-            previous_results = []  
+            accumulated_context = [] # Worker 간 공유 메모리
             
+            # 2. Worker 실행
             for idx, task in enumerate(tasks, 1):
+                # 사이클 제한 체크
+                if idx > self.MAX_ITERATIONS:
+                    logger.warning(f"[{self.name}] 최대 반복 횟수 초과로 중단")
+                    break
+
                 agent_name = task.agent_name
                 worker = self.worker_agents.get(agent_name)
                 
@@ -160,19 +150,20 @@ ExecutionPlan 형식:
                     logger.warning(f"[{self.name}] Worker 없음: {agent_name}")
                     continue
                 
-                logger.info(f"[{self.name}] Worker 실행 ({idx}/{len(tasks)}): {agent_name}")
+                logger.info(f"[{self.name}] Step {idx}: {agent_name} 실행 중...")
                 
-                # Worker에게 작업 전달 
-                task_message = task.description
+                # Context 병합 및 전체 데이터 전달
                 task_context = {
                     'task_id': task.task_id,
                     'query': task.query,
-                    'previous_results': previous_results, 
+                    'previous_results': accumulated_context, 
                     **(context or {})
                 }
                 
-                worker_result = await worker.process(task_message, task_context)
+                # Worker 실행
+                worker_result = await worker.process(task.description, task_context)
                 
+                # 결과 저장
                 result_entry = {
                     'task_id': task.task_id,
                     'agent_name': agent_name,
@@ -180,71 +171,76 @@ ExecutionPlan 형식:
                 }
                 results.append(result_entry)
                 
+                # 실패 처리
+                if not worker_result.success:
+                    logger.error(f"[{self.name}] Worker 실행 실패: {worker_result.error}")
+                    break
+
+                # 성공 시 데이터 처리
                 if worker_result.success and worker_result.data:
-                    previous_results.append({
-                        'task_id': task.task_id,
+                    data = worker_result.data
+                    
+                    # 1. Context 누적
+                    full_res = data.get('full_result') or data.get('answer', '')
+                    summary_res = data.get('summary') or data.get('answer', '')
+                    
+                    accumulated_context.append({
+                        'step': idx,
                         'agent': agent_name,
-                        'data': worker_result.data
+                        'summary': summary_res,
+                        'output': full_res 
                     })
+                    
+                    # 2. Sources 수집
+                    if 'sources' in data:
+                        self.sources.extend(data['sources'])
+                        
+                    # 3. Evidence 수집
+                    if 'evidence_data' in data:
+                        self.evidence.append(str(data['evidence_data']))
             
-            # 3. 결과 통합
-            final_result = self._aggregate_results(results)
+            # 3. 최종 결과 통합
+            final_output = self._aggregate_results(results)
+            self.result = final_output.get('answer')
             
             logger.info(f"[{self.name}] 요청 처리 완료")
             
             return AgentResult(
                 success=True,
-                data=final_result,
+                data=final_output,
                 error=None
             )
             
         except Exception as e:
             logger.error(f"[{self.name}] 요청 처리 실패: {str(e)}")
-            return AgentResult(
-                success=False,
-                data=None,
-                error=str(e)
-            )
+            return AgentResult(success=False, data=None, error=str(e))
     
     def _aggregate_results(self, results: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """
-        Worker 실행 결과 통합
+        """결과 통합"""
         
-        Args:
-            results: Worker 실행 결과 리스트
-            
-        Returns:
-            통합된 결과
-        """
-        # 모든 Worker 결과 수집
-        all_answers = []
-        all_details = []
+        final_answer = "작업을 완료하지 못했습니다."
         
-        for result in results:
-            agent_result = result['result']
-            all_details.append({
-                'task_id': result['task_id'],
-                'agent': result['agent_name'],
-                'success': agent_result.success,
-                'data': agent_result.data,
-                'error': agent_result.error
-            })
-            
-            if agent_result.success and agent_result.data:
-                if isinstance(agent_result.data, dict):
-                    answer = agent_result.data.get('answer')
-                    if answer:
-                        all_answers.append(f"[{result['agent_name']}]\n{answer}")
-        
-        # 최종 답변 구성
-        final_answer = "\n\n".join(all_answers) if all_answers else "답변을 생성할 수 없습니다."
-        
-        aggregated = {
-            'answer': final_answer, 
-            'total_tasks': len(results),
-            'successful_tasks': sum(1 for r in results if r['result'].success),
-            'details': all_details  
-        }
-        
-        return aggregated
+        if results:
+            last_result = results[-1]
+            if last_result['result'].success:
+                res_data = last_result['result'].data
+                if isinstance(res_data, dict):
+                    # full_result가 있으면 우선 사용
+                    final_answer = res_data.get('full_result') or res_data.get('answer', str(res_data))
+                else:
+                    final_answer = str(res_data)
+            else:
+                 final_answer = f"작업 중 오류가 발생했습니다: {last_result['result'].error}"
 
+        # 실행 로그 구성
+        execution_log = []
+        for r in results:
+            status = "성공" if r['result'].success else f"실패"
+            execution_log.append(f"[{r['agent_name']}] {status}")
+
+        return {
+            'answer': final_answer,
+            'log': execution_log,
+            'details': results,
+            'sources': self.sources
+        }

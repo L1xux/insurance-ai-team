@@ -2,86 +2,81 @@
 Agent CLI
 =========================
 Author: Jin
-Date: 2025.10.12
-Version: 1.0
+Date: 2026.02.07
+Version: 3.0 (Correct Tools Integration)
 
 Description:
 Manager Agent와 CLI로 상호작용하는 인터페이스입니다.
+직접 구현한 ArxivSearchTool과 NewsSearchTool을 올바르게 통합했습니다.
 """
 import asyncio
 import sys
-from pathlib import Path
+import argparse
+import json
+from typing import List, Dict, Any
 
+# Factory & Agents
 from factories.agent_factory import get_agent_factory
 from agents.orchestrator.manager_agent import InsuranceManagerAgent
 from agents.team.customer_insight.customer_insight_agent import CustomerInsightAgent
+from agents.team.product.product_strategy_agent import ProductStrategyAgent
+
+# Tools
 from tools.insurance.h2022 import H2022DemographicTool, H2022ActuarialTool, H2022RiskTool
 from tools.rag import MultiQueryRAGTool, HyDERAGTool, ContextualCompressionRAGTool, SelfQueryRAGTool
 from tools.code_generator import VisualizationTool
+
+
+from tools.data_collector.arxiv_tool import ArxivSearchTool
+from tools.data_collector.news_search_tool import NewsSearchTool
+
+
+# RAG Core
 from rag.common.retriever import Retriever
 from rag.insurance.h2022.h2022_embedding import H2022Embedding
 from rag.insurance.h2022.h2022_vector_store import H2022VectorStore
 from rag.common.openai_embedder import OpenAIEmbedder
+from rag.common.ollama_embedder import OllamaEmbedder
+
+# Utils
 from base.agent.llm_base import LLMBase
 from config.logging_config import logger
 from utils.data.insurance_2022_data_analyzer import Insurance2022DataAnalyzer
-from utils.data.insurance_2022_data_loader import Insurance2022DataLoader
 from utils.data.all_insurance_csv_loader import AllInsuranceCSVLoader
 from agents.llm_providers.llm_openai import LLMOpenAI
 from agents.llm_providers.llm_ollama import LLMOllama
 from utils.handler.llm_model_handler import LLMModelHandler
 from utils.handler.embedding_model_handler import EmbeddingModelHandler
-from rag.common.ollama_embedder import OllamaEmbedder
 
 
 def print_header():
-    """헤더 출력"""
     print("\n" + "=" * 70)
-    print("Insurance Data Analysis Agent System")
+    print("Insurance Data Analysis & Strategy Agent System")
     print("=" * 70 + "\n")
 
 
 def print_section(title: str):
-    """섹션 헤더 출력"""
     print(f"\n{'─' * 70}")
     print(f"  {title}")
     print(f"{'─' * 70}\n")
 
 
 def select_embedding_model() -> tuple:
-    """Embedding 모델 선택"""
     print("\nRAG를 위한 Embedding 모델 선택")
-    print("   (Enter를 누르면 기본값 'text-embedding-3-small' 사용)\n")
+    print("   (Enter를 누르면 기본값 text-embedding-3-small 사용)\n")
     
     handler = EmbeddingModelHandler()
-    
-    # 기본값 옵션 제공
     choice = input("모델 목록을 보시겠습니까? (y/n, 또는 Enter로 기본값 사용): ").strip().lower()
     
     if not choice or choice == 'n':
-        print("   text-embedding-3-small 선택됨 (기본값)")
+        print("   text-embedding-3-small 선택됨")
         return ("openai", "text-embedding-3-small", 1536)
     
     result = handler.select_model()
-    if result:
-        return result
-    else:
-        print("   text-embedding-3-small 선택됨 (기본값)")
-        return ("openai", "text-embedding-3-small", 1536)
+    return result if result else ("openai", "text-embedding-3-small", 1536)
 
 
 def create_llm_from_selection(provider: str, model: str, temperature: float = 0.7):
-    """
-    Provider와 모델명으로 LLM 구현체 생성
-    
-    Args:
-        provider: 제공자 (openai, ollama)
-        model: 모델 이름
-        temperature: 생성 온도
-        
-    Returns:
-        LLMBase 구현체 (LLMOpenAI 또는 LLMOllama)
-    """
     if provider == "openai":
         return LLMOpenAI(model_name=model, temperature=temperature)
     elif provider == "ollama":
@@ -91,211 +86,228 @@ def create_llm_from_selection(provider: str, model: str, temperature: float = 0.
 
 
 def select_llm_with_handler(purpose: str) -> tuple:
-    """
-    LLMModelHandler를 사용하여 LLM 선택
-    
-    Args:
-        purpose: 사용 목적 (예: "Manager Agent")
-        
-    Returns:
-        (provider, model) 튜플
-    """
     print(f"\n{purpose}을 위한 LLM 선택")
-    print("   (Enter를 누르면 기본값 'gpt-4o-mini' 사용)\n")
+    print("   (Enter를 누르면 기본값 gpt-4o-mini 사용)\n")
     
     handler = LLMModelHandler()
-    
-    # 기본값 옵션 제공
     choice = input("모델 목록을 보시겠습니까? (y/n, 또는 Enter로 기본값 사용): ").strip().lower()
     
     if not choice or choice == 'n':
-        print("   gpt-4o-mini 선택됨 (기본값)")
+        print("   gpt-4o-mini 선택됨")
         return ("openai", "gpt-4o-mini")
     
     result = handler.select_model()
-    if result:
-        return result
-    else:
-        print("   gpt-4o-mini 선택됨 (기본값)")
-        return ("openai", "gpt-4o-mini")
-
-
-def select_team_llm_with_handler() -> dict:
-    """
-    LLMModelHandler를 사용하여 Team별 LLM 선택
-    
-    Returns:
-        팀별 (provider, model) 튜플 딕셔너리
-    """
-    print("\nWorker Agent Teams:")
-    print("   1. Customer Insight Team (인구통계, 구매행동 분석)")
-    print("\n   모든 Teams에 동일한 LLM 사용")
-    print("   (Enter를 누르면 기본값 'gpt-4o-mini' 사용)\n")
-    
-    handler = LLMModelHandler()
-    
-    choice = input("모델 목록을 보시겠습니까? (y/n, 또는 Enter로 기본값 사용): ").strip().lower()
-    
-    if not choice or choice == 'n':
-        print("   gpt-4o-mini 선택됨 (기본값)")
-        result = ("openai", "gpt-4o-mini")
-    else:
-        result = handler.select_model()
-        if not result:
-            print("   gpt-4o-mini 선택됨 (기본값)")
-            result = ("openai", "gpt-4o-mini")
-    
-    return {
-        'customer_insight': result
-    }
+    return result if result else ("openai", "gpt-4o-mini")
 
 
 async def setup_agents():
     """Agent 시스템 설정"""
     print_section("Agent 시스템 설정")
     
-    # LLM 선택 (LLMModelHandler 사용)
+    # LLM 선택
     manager_provider, manager_model = select_llm_with_handler("Manager Agent")
-    team_llms = select_team_llm_with_handler()
+    worker_provider, worker_model = select_llm_with_handler("Worker Agents")
     
-    # Factory
     factory = get_agent_factory()
     
     # LLM 등록
-    manager_llm = create_llm_from_selection(manager_provider, manager_model, temperature=0.7)
-    customer_provider, customer_model = team_llms['customer_insight']
-    customer_llm = create_llm_from_selection(customer_provider, customer_model, temperature=0.7)
+    manager_llm = create_llm_from_selection(manager_provider, manager_model, temperature=0.5)
+    worker_llm = create_llm_from_selection(worker_provider, worker_model, temperature=0.7)
     
     factory.register_llm("manager_llm", manager_llm)
-    factory.register_llm("customer_insight_llm", customer_llm)
+    factory.register_llm("worker_llm", worker_llm)
     
     print(f"\nLLM 등록 완료")
-    print(f"   Manager: {manager_provider.upper()} - {manager_model}")
-    print(f"   Customer Insight: {customer_provider.upper()} - {customer_model}")
+    print(f"   Manager: {manager_model}")
+    print(f"   Workers: {worker_model}")
     
     # Tools 설정
     print("\nTools 설정 중...")
     
-    # 데이터 로드
-    print("   모든 보험 데이터 병렬 로드 중...")
+    # 1. Insurance Data Tools
+    print("   보험 데이터 로드 중...")
     all_loader = AllInsuranceCSVLoader(data_dir="data")
     batches = all_loader.load_all_parallel(max_workers=2)
     
-    if not batches:
-        print("   경고: 로드된 데이터가 없습니다.")
-        print("   Insurance Tools는 비활성화됩니다.")
-        h2022_tools_enabled = False
-    else:
-        # 로드 결과 출력
-        summary = all_loader.get_summary()
-        print(f"   데이터 로드 완료:")
-        for filename, info in summary['files'].items():
-            print(f"      - {filename}: {info['records']:,}개 레코드")
-        print(f"   총 {summary['total_records']:,}개 레코드")
-        
-        # 2022 데이터로 analyzer 설정 (기존 호환성 유지)
+    if batches:
         batch_2022 = all_loader.get_batch('insurance_US_2022.csv')
         if batch_2022:
             analyzer = Insurance2022DataAnalyzer()
             analyzer.load_insurance_data(batch_2022)
             
-            # 모든 H2022 Tools에 동일한 analyzer 주입
-            demographic_tool = H2022DemographicTool(analyzer=analyzer)
-            actuarial_tool = H2022ActuarialTool(analyzer=analyzer)
-            risk_tool = H2022RiskTool(analyzer=analyzer)
-            
-            factory.register_tool(demographic_tool)
-            factory.register_tool(actuarial_tool)
-            factory.register_tool(risk_tool)
-            print(f"   H2022 Tools 등록 (3개)")
-            h2022_tools_enabled = True
+            factory.register_tool(H2022DemographicTool(analyzer=analyzer))
+            factory.register_tool(H2022ActuarialTool(analyzer=analyzer))
+            factory.register_tool(H2022RiskTool(analyzer=analyzer))
+            factory.register_tool(VisualizationTool(dataframe=analyzer.df))
+            print("   Insurance Analysis & Vis Tools 등록 완료")
+
+    # 2. RAG Tools
+    print("   RAG 시스템 초기화 중...")
+    try:
+        e_provider, e_model, e_dim = select_embedding_model()
+        if e_provider == "openai":
+            base_embedder = OpenAIEmbedder(model_name=e_model, dimension=e_dim)
         else:
-            print("   경고: 2022 데이터를 찾을 수 없습니다.")
-            print("   H2022 Tools는 비활성화됩니다.")
-            h2022_tools_enabled = False
+            base_embedder = OllamaEmbedder(model_name=e_model, dimension=e_dim)
+            
+        embedder = H2022Embedding(embedder=base_embedder)
+        vector_store = H2022VectorStore(dimension=e_dim)
+        retriever = Retriever(embedder=embedder, vector_store=vector_store, top_k=5)
+        
+        factory.register_tool(MultiQueryRAGTool(retriever=retriever))
+        factory.register_tool(HyDERAGTool(retriever=retriever))
+        print("   RAG Tools 등록 완료")
+    except Exception as e:
+        logger.warning(f"RAG 설정 실패 Skipping: {e}")
+
+    # 3. Data Collector Tools
+    try:
+        arxiv_tool = ArxivSearchTool()
+        news_tool = NewsSearchTool()
+
+        factory.register_tool(arxiv_tool)
+        factory.register_tool(news_tool)
+        print("   Data Collector Tools (Arxiv, News) 등록 완료")
+    except Exception as e:
+        logger.warning(f"데이터 수집 도구 설정 실패: {e}")
+
+    # Agents 생성
+    print("\nAgents 생성 중...")
     
-    # RAG Tools - Embedding 모델 선택
-    print("\nEmbedding 모델 설정 중...")
-    embedding_provider, embedding_model, embedding_dimension = select_embedding_model()
+    # 1. Customer Insight Agent
+    insight_tools = ["h2022_demographic_analysis", "h2022_risk_analysis", "visualization_generator", "multi_query_rag"]
+    valid_insight_tools = [t for t in insight_tools if t in factory._tools]
     
-    # Embedding 모델 생성
-    if embedding_provider == "openai":
-        base_embedder = OpenAIEmbedder(model_name=embedding_model, dimension=embedding_dimension)
-    elif embedding_provider == "ollama":
-        base_embedder = OllamaEmbedder(model_name=embedding_model, dimension=embedding_dimension)
-    else:
-        raise ValueError(f"지원하지 않는 embedding provider: {embedding_provider}")
-    
-    embedder = H2022Embedding(embedder=base_embedder)
-    vector_store = H2022VectorStore(dimension=embedding_dimension)
-    retriever = Retriever(embedder=embedder, vector_store=vector_store, top_k=5)
-    
-    print(f"   Embedding 모델: {embedding_provider.upper()} - {embedding_model} (차원: {embedding_dimension})")
-    
-    multi_query_tool = MultiQueryRAGTool(retriever=retriever)
-    hyde_tool = HyDERAGTool(retriever=retriever)
-    compression_tool = ContextualCompressionRAGTool(retriever=retriever)
-    self_query_tool = SelfQueryRAGTool(retriever=retriever)
-    
-    factory.register_tool(multi_query_tool)
-    factory.register_tool(hyde_tool)
-    factory.register_tool(compression_tool)
-    factory.register_tool(self_query_tool)
-    
-    print(f"   RAG Tools 등록 (4개)")
-    
-    # Visualization Tool
-    if h2022_tools_enabled:
-        # analyzer를 사용하여 DataFrame이 있는 경우에만 등록
-        viz_tool = VisualizationTool(dataframe=analyzer.df)
-        factory.register_tool(viz_tool)
-        print(f"   VisualizationTool 등록")
-    else:
-        print(f"   VisualizationTool 비활성화 (데이터 없음)")
-    
-    # Worker Agents 생성
-    print("\nWorker Agents 생성 중...")
-    
-    # Factory에 등록된 모든 Tool 이름 자동 가져오기
-    tool_names = factory.get_all_tool_names()
-    
-    customer_agent = factory.create_worker(
-        name="customer_insight_agent",
-        description="인구통계 프로파일링, 구매 행동 분석, 타겟 세그먼트 식별",
-        tool_names=tool_names,
-        llm_name="customer_insight_llm",
+    factory.create_worker(
+        name="customer_analyst",
+        description="고객 데이터 분석 및 인사이트 도출 전문가",
+        tool_names=valid_insight_tools,
+        llm_name="worker_llm",
         worker_class=CustomerInsightAgent
     )
     
-    print(f"   Customer Insight Agent 생성 (Tools: {len(tool_names)}개)")
-    print(f"      등록된 Tools: {', '.join(tool_names)}")
+    # 2. Product Strategy Agent
+    strategy_tools = ["arxiv_paper_search", "news_market_search"]
+    valid_strategy_tools = [t for t in strategy_tools if t in factory._tools]
     
-    # Manager Agent 생성
-    print("\nManager Agent 생성 중...")
+    factory.create_worker(
+        name="product_planner",
+        description="시장 조사 및 상품 전략 기획 전문가",
+        tool_names=valid_strategy_tools,
+        llm_name="worker_llm",
+        worker_class=ProductStrategyAgent
+    )
     
+    print(f"   Worker Agents 생성 완료: customer_analyst, product_planner")
+    
+    # 3. Manager Agent
     manager = factory.create_manager(
         name="insurance_manager",
-        description="보험 데이터 분석 Manager Agent",
-        worker_names=["customer_insight_agent"],
+        description="보험 데이터 분석 및 기획 총괄 PM",
+        worker_names=["customer_analyst", "product_planner"],
         llm_name="manager_llm",
         manager_class=InsuranceManagerAgent
     )
     
     print("   Manager Agent 생성 완료")
-    
     return manager
 
+def evaluate_with_ragas(query: str, answer: str, contexts: List[str]):
+    """Ragas를 사용한 답변 품질 평가"""
+    print_section("Ragas Quality Evaluation")
+    
+    if not contexts:
+        print("   평가 불가: 검색된 증거 자료가 없습니다.")
+        return
 
-async def chat_loop(manager):
-    """대화 루프 """
+    print("   평가 진행 중... (LLM 및 임베딩 모델 호출)")
+    
+    try:
+        from ragas import evaluate
+        from ragas.metrics import faithfulness, answer_relevancy
+        from datasets import Dataset
+        from langchain_openai import ChatOpenAI
+        from langchain_huggingface import HuggingFaceEmbeddings
+        
+        # 1. 평가용 모델 설정
+        evaluator_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+        
+        evaluator_embeddings = HuggingFaceEmbeddings(
+            model_name="nomic-ai/nomic-embed-text-v1",
+            model_kwargs={'trust_remote_code': True, 'device': 'cpu'},
+            encode_kwargs={'normalize_embeddings': True}
+        )
+
+        # 2. 데이터셋 생성
+        data = {
+            'question': [query],
+            'answer': [answer],
+            'contexts': [contexts]
+        }
+        dataset = Dataset.from_dict(data)
+
+        # 3. 평가 실행
+        results = evaluate(
+            dataset=dataset,
+            metrics=[faithfulness, answer_relevancy],
+            llm=evaluator_llm,
+            embeddings=evaluator_embeddings
+        )
+
+        # 점수 추출 헬퍼 함수
+        def safe_extract_score(metric_name, results_obj):
+            try:
+                # 1. 딕셔너리처럼 접근 시도
+                score = results_obj[metric_name]
+            except Exception:
+                # 2. 접근 불가 시 Pandas로 변환하여 접근
+                try:
+                    df = results_obj.to_pandas()
+                    score = df.iloc[0][metric_name]
+                except Exception:
+                    return 0.0
+
+            # 3. 리스트인 경우 첫 번째 값 추출
+            if isinstance(score, list):
+                if len(score) > 0:
+                    return float(score[0])
+                return 0.0
+            
+            # 4. 이미 숫자인 경우
+            try:
+                return float(score)
+            except (ValueError, TypeError):
+                return 0.0
+
+        # 안전하게 점수 추출
+        faith_score = safe_extract_score('faithfulness', results)
+        rel_score = safe_extract_score('answer_relevancy', results)
+
+        print(f"\n   [평가 결과]")
+        print(f"   - Faithfulness (사실 충실도): {faith_score:.4f}")
+        print(f"   - Answer Relevancy (답변 관련성): {rel_score:.4f}")
+        
+        if faith_score < 0.7:
+            print("\n   ⚠️ 경고: 답변의 충실도가 낮습니다. 환각 가능성이 있습니다.")
+
+    except ImportError:
+        print("   Error: 필수 패키지 로드 실패.")
+        print("   pip install ragas langchain-huggingface sentence-transformers einops")
+    except Exception as e:
+        print(f"   [Warning] 평가 중 오류 발생: {e}")
+        logger.warning(f"Ragas Evaluation Error: {e}", exc_info=True)
+
+
+
+async def chat_loop(manager, enable_ragas: bool = False):
+    """대화 루프"""
     from langchain_core.chat_history import InMemoryChatMessageHistory
     from langchain_core.messages import HumanMessage, AIMessage
     
-    print_section("대화 시작")
-    print("Manager Agent와 대화를 시작합니다.")
-    print("   종료하려면 'quit', 'exit', 'q'를 입력하세요.\n")
+    print_section("시스템 준비 완료")
+    print(f"   Ragas 평가 모드: {'ON' if enable_ragas else 'OFF'}")
+    print("   종료하려면 quit, exit, q를 입력하세요.\n")
     
-    # Chat History 초기화
     chat_history = InMemoryChatMessageHistory()
     
     while True:
@@ -309,34 +321,44 @@ async def chat_loop(manager):
             if not user_input:
                 continue
             
-            print("\nManager Agent: (처리 중...)")
+            print("\nManager Agent: 처리 중...")
             
-            # Chat History에 사용자 메시지 추가
             chat_history.add_message(HumanMessage(content=user_input))
             
-            # Context에 chat history 포함
             context = {
                 'chat_history': chat_history.messages,
                 'session_id': 'default'
             }
             
-            # Manager Agent 실행
             result = await manager.process(user_input, context)
             
             if result.success:
                 data = result.data
                 answer = data.get('answer', '답변 없음')
+                sources = data.get('sources', [])
+                
+                # 답변 출력
                 print(f"\n{answer}\n")
                 
-                # Chat History에 AI 응답 추가
+                # 출처 출력
+                if sources:
+                    print("-" * 50)
+                    print("참고 문헌 Sources:")
+                    for idx, src in enumerate(sources, 1):
+                        title = src.get('title', 'No Title')
+                        url = src.get('url', 'N/A')
+                        print(f"   {idx}. {title} ({url})")
+                    print("-" * 50)
+                
                 chat_history.add_message(AIMessage(content=answer))
                 
-                # 처리 통계
-                if data.get('total_tasks'):
-                    print(f"\n처리 통계:")
-                    print(f"   총 작업: {data['total_tasks']}개")
-                    print(f"   성공: {data.get('successful_tasks', 0)}개")
-                    print(f"   대화 기록: {len(chat_history.messages)}개 메시지")
+                # Ragas 평가
+                if enable_ragas and manager.evidence:
+                    evaluate_with_ragas(
+                        query=user_input,
+                        answer=manager.result,
+                        contexts=manager.evidence
+                    )
             else:
                 print(f"\n오류: {result.error}")
         
@@ -350,14 +372,16 @@ async def chat_loop(manager):
 
 async def main():
     """메인 함수"""
+    parser = argparse.ArgumentParser(description="Insurance Agent System")
+    parser.add_argument("--ragas", action="store_true", help="Enable Ragas evaluation")
+    args = parser.parse_args()
+
     try:
         print_header()
         
-        # Agent 설정
         manager = await setup_agents()
         
-        # 대화 시작
-        await chat_loop(manager)
+        await chat_loop(manager, enable_ragas=args.ragas)
         
     except KeyboardInterrupt:
         print("\n\n프로그램을 종료합니다.")
@@ -369,4 +393,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
